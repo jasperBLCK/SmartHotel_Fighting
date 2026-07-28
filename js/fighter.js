@@ -1,6 +1,11 @@
 /* ===================================================================
    fighter.js — арена, боец, физика и его отрисовка.
 
+   Персонаж рисуется кодом как человеческая фигура: торс, две руки и две
+   ноги из двух сегментов каждая. Позы задаются целевыми точками кистей и
+   стоп, а положение локтей/коленей считает двухзвенная IK (solveIK).
+   Голова — фотография игрока, вырезанная по черепу (см. js/face.js).
+
    Мир фиксированного размера ARENA.W x ARENA.H, канвас просто
    масштабируется под экран, поэтому все игроки видят одно и то же.
    =================================================================== */
@@ -33,18 +38,39 @@ const PHYS = {
   BLOCK_SPD: 0.30,        // множитель скорости в блоке
   BLOCK_DMG: 0.20,        // множитель урона по блоку
   BLOCK_KB: 0.45,         // множитель отбрасывания по блоку
-  W: 76, H: 132,          // хитбокс бойца
+  W: 74, H: 134,          // хитбокс бойца
   MAX_HP: 100,
   RESPAWN_MS: 10000,      // 10 секунд до возрождения
   INVULN_MS: 1600,        // неуязвимость после респавна
 };
 
-/* ---------------- Параметры ударов ----------------
-   startup — замах, active — активные кадры (есть хитбокс), recovery — отход. */
-const ATTACKS = {
-  punch: { startup: 4,  active: 5, recovery: 8,  dmg: 7,  reach: 78,  hh: 46, oy: -92, kbx: 7.5, kby: -2.5, stun: 10, sfx: 'punch' },
-  kick:  { startup: 8,  active: 6, recovery: 17, dmg: 14, reach: 108, hh: 40, oy: -52, kbx: 14,  kby: -6.5, stun: 16, sfx: 'kick'  },
+/* ---------------- Пропорции тела (в мировых пикселях, от ступней вверх) ----
+   Меняй здесь, если хочешь другое телосложение — отрисовка подстроится. */
+const BODY = {
+  HIP_Y: -56, SHOULDER_Y: -96, NECK_Y: -102,
+  HEAD_Y: -119, HEAD_R: 21,
+  SHOULDER_HW: 25,        // полуширина плеч
+  WAIST_HW: 15, HIP_HW: 17,
+  UPPER_ARM: 24, FOREARM: 25, GLOVE_R: 10,
+  THIGH: 29, SHIN: 29, FOOT_L: 15,
+  ARM_W: 13, FOREARM_W: 11, THIGH_W: 18, SHIN_W: 14,
 };
+
+/* ---------------- Параметры ударов ----------------
+   startup — замах, active — активные кадры (есть хитбокс), recovery — отход.
+   ox/oy — угол хитбокса относительно центра бойца (ноги = y). */
+const ATTACKS = {
+  punch: { startup: 4, active: 5, recovery: 8,  dmg: 7,  reach: 66, ox: 14, oy: -104, hh: 46, kbx: 7.5, kby: -2.5, stun: 10 },
+  kick:  { startup: 8, active: 6, recovery: 17, dmg: 14, reach: 84, ox: 10, oy: -62,  hh: 46, kbx: 14,  kby: -6.5, stun: 16 },
+};
+
+/* Оттенки кожи — по слоту, чтобы бойцы не были клонами. */
+const SKIN = [
+  { s: '#e0a878', d: '#b47c50' },
+  { s: '#f0c9a0', d: '#c39a72' },
+  { s: '#c98a5c', d: '#9c6238' },
+  { s: '#a86a42', d: '#7d4826' },
+];
 
 /* Скруглённый прямоугольник (с фолбэком для старых браузеров). */
 function rr(c, x, y, w, h, r) {
@@ -59,19 +85,39 @@ function rr(c, x, y, w, h, r) {
   c.closePath();
 }
 
+/*
+  Двухзвенная IK: где встанет локоть/колено, если из точки A до точки B
+  тянутся два сегмента длиной l1 и l2. sign задаёт, в какую сторону
+  выгибается сустав.
+*/
+function solveIK(ax, ay, bx, by, l1, l2, sign) {
+  let dx = bx - ax, dy = by - ay;
+  let d = Math.hypot(dx, dy);
+  const maxD = (l1 + l2) * 0.999;
+  if (d > maxD) { const k = maxD / (d || 1); dx *= k; dy *= k; d = maxD; }
+  if (d < 0.001) d = 0.001;
+  const base = Math.atan2(dy, dx);
+  const cosA = U.clamp((l1 * l1 + d * d - l2 * l2) / (2 * l1 * d), -1, 1);
+  const ang = base + sign * Math.acos(cosA);
+  return { x: ax + Math.cos(ang) * l1, y: ay + Math.sin(ang) * l1,
+           ex: ax + dx, ey: ay + dy };          // ex/ey — достижимая цель
+}
+
 class Fighter {
   constructor(pid, idx, name) {
     this.pid = pid;
     this.idx = idx;                       // слот 0..3 — определяет цвет
     this.name = name || ('Игрок ' + (idx + 1));
     this.color = U.COLORS[idx % U.COLORS.length];
-    this.avatar = null;                   // Image с фото лица (или дефолтный)
+    this.skin = SKIN[idx % SKIN.length];
+    this.avatar = null;                   // Image с фото головы (или дефолт)
 
-    this.x = ARENA.SPAWNS[idx % ARENA.SPAWNS.length].x;
-    this.y = ARENA.SPAWNS[idx % ARENA.SPAWNS.length].y;
+    const sp = ARENA.SPAWNS[idx % ARENA.SPAWNS.length];
+    this.x = sp.x; this.y = sp.y;
     this.vx = 0; this.vy = 0;
     this.facing = 1;
     this.onGround = false;
+    this.onFloor = false;
     this.jumps = 0;
     this.dropTimer = 0;                   // игнор платформ при спуске вниз
 
@@ -87,11 +133,13 @@ class Fighter {
     this.blocking = false;
     this.lastHitBy = null;
 
-    // чисто визуальное
-    this.animT = 0;
+    // чисто визуальное (живёт и на хосте, и на клиенте)
+    this.animT = 0;                       // фаза цикла бега
     this.flash = 0;                       // вспышка при получении урона
-    this.squash = 0;                      // сплющивание при приземлении
-    this.rx = 0; this.ry = 0;             // сглаженные координаты для отрисовки
+    this.squash = 0;                      // приседание при приземлении
+    this.rx = 0; this.ry = 0;             // сглаженные координаты
+    this.prevState = 'idle';
+    this.lastDraw = 0;
   }
 
   /* AABB бойца (x — центр, y — ноги). */
@@ -108,6 +156,7 @@ class Fighter {
     this.invuln = PHYS.INVULN_MS;
     this.state = 'idle'; this.atk = null; this.stun = 0;
     this.lastHitBy = null;
+    this.rx = spawn.x; this.ry = spawn.y;
   }
 
   /* ---------- Шаг физики (выполняется ТОЛЬКО на хосте) ----------
@@ -119,8 +168,6 @@ class Fighter {
       return;
     }
     if (this.invuln > 0) this.invuln = Math.max(0, this.invuln - dtMs);
-    if (this.flash > 0) this.flash--;
-    if (this.squash > 0) this.squash--;
     if (this.dropTimer > 0) this.dropTimer--;
 
     const busy = this.atk !== null;
@@ -172,7 +219,6 @@ class Fighter {
     this.x += this.vx;
     this.y += this.vy;
 
-    // границы арены по бокам
     const half = PHYS.W / 2;
     if (this.x < half) { this.x = half; this.vx = 0; }
     if (this.x > ARENA.W - half) { this.x = ARENA.W - half; this.vx = 0; }
@@ -199,7 +245,7 @@ class Fighter {
     }
     if (this.onGround) {
       this.jumps = 2;
-      if (wasAir) this.squash = 8;
+      if (wasAir) this.squash = 9;
     }
 
     /* --- продвижение удара по кадрам --- */
@@ -209,8 +255,7 @@ class Fighter {
       if (this.atk.frame > a.startup + a.active + a.recovery) this.atk = null;
     }
 
-    /* --- визуальное состояние --- */
-    this.animT += Math.abs(this.vx) * 0.06 + 0.02;
+    /* --- итоговое состояние --- */
     if (this.stun > 0) this.state = 'hit';
     else if (this.atk) this.state = this.atk.type;
     else if (this.blocking) this.state = 'block';
@@ -227,13 +272,13 @@ class Fighter {
     if (f <= a.startup || f > a.startup + a.active) return null;
     const w = a.reach, h = a.hh;
     return {
-      x: this.facing > 0 ? this.x + 20 : this.x - 20 - w,
+      x: this.facing > 0 ? this.x + a.ox : this.x - a.ox - w,
       y: this.y + a.oy - h / 2,
       w, h, dmg: a.dmg, kbx: a.kbx, kby: a.kby, stun: a.stun, type: this.atk.type,
     };
   }
 
-  /* Получить урон. Возвращает {blocked, killed}. */
+  /* Получить урон. Возвращает {blocked, killed, dmg}. */
   takeHit(hb, fromPid) {
     if (this.dead || this.invuln > 0) return null;
     const dir = Math.sign(this.x - (hb.x + hb.w / 2)) || 1;
@@ -249,7 +294,7 @@ class Fighter {
     if (!blocked) {
       this.stun = hb.stun;
       this.atk = null;
-      this.flash = 8;
+      this.flash = 9;
       this.onGround = false;
     }
     this.lastHitBy = fromPid;
@@ -281,7 +326,7 @@ class Fighter {
       fl: this.flash,
     };
   }
-  /* Применить состояние с хоста (у клиента). smooth=true — плавно тянем позицию. */
+  /* Применить состояние с хоста (у клиента). */
   fromNet(s) {
     this.x = s.x; this.y = s.y;
     this.facing = s.f; this.hp = s.h;
@@ -289,21 +334,156 @@ class Fighter {
     this.atk = s.af ? { type: (s.s === 'kick' ? 'kick' : 'punch'), frame: s.af, hit: null } : null;
     this.kills = s.k; this.deaths = s.d;
     this.dead = !!s.dd; this.respawnLeft = s.r; this.invuln = s.v;
-    this.blocking = !!s.b; this.flash = s.fl;
+    this.blocking = !!s.b;
+    if (s.fl > this.flash) this.flash = s.fl;      // вспышку не гасим раньше времени
+  }
+
+  /* =================================================================
+     ПОЗА
+     Считаем ключевые точки скелета. Всё в мировых координатах,
+     this.rx/ry — сглаженный центр (ноги на ry).
+     ================================================================= */
+  pose(now) {
+    const f = this.facing, x = this.rx, y = this.ry;
+    const st = this.state;
+    const t = this.animT;
+    const B = BODY;
+
+    // приседание при приземлении и в блоке
+    const squash = (this.squash / 9) * 7;
+    const crouch = squash + (st === 'block' ? 6 : 0);
+    const breathe = Math.sin(now / 620) * 1.1;
+
+    let lean = 0;                            // наклон корпуса вперёд (по facing)
+    if (st === 'run') lean = 7;
+    else if (st === 'punch') lean = 9;
+    else if (st === 'kick') lean = -7;
+    else if (st === 'hit') lean = -10;
+    else if (st === 'block') lean = 4;
+    else if (st === 'air') lean = 3;
+    else lean = 2;
+
+    const hipX = x - f * lean * 0.25;
+    const hipY = y + B.HIP_Y + crouch;
+    const shX = x + f * lean * 0.75;
+    const shY = y + B.SHOULDER_Y + crouch * 1.25 + breathe;
+
+    // плечи: переднее ближе к зрителю по направлению взгляда
+    const shFront = { x: shX + f * 7, y: shY + 2 };
+    const shBack  = { x: shX - f * 9, y: shY };
+
+    const p = { f, x, y, hipX, hipY, shX, shY, shFront, shBack,
+                headX: shX + f * 4, headY: y + B.HEAD_Y + crouch * 1.3 + breathe,
+                neckY: y + B.NECK_Y + crouch * 1.25 + breathe, lean, crouch };
+
+    // прогресс выброса конечности в ударе: замах → выброс → возврат
+    const a = this.atk ? ATTACKS[this.atk.type] : null;
+    const prog = a ? this.attackProgress(a) : 0;
+
+    /* --- цели для стоп --- */
+    if (st === 'run') {
+      const ph = t * Math.PI * 2;
+      const foot = (phase) => ({
+        x: hipX + f * Math.cos(phase) * 21,
+        y: y - Math.max(0, Math.sin(phase)) * 17,
+      });
+      p.footFront = foot(ph);
+      p.footBack = foot(ph + Math.PI);
+    } else if (st === 'air') {
+      const up = U.clamp(-this.vy / 18, -1, 1);
+      p.footFront = { x: hipX + f * 19, y: y - 20 - up * 8 };
+      p.footBack  = { x: hipX - f * 11, y: y - 8 + up * 6 };
+    } else if (st === 'kick' && a) {
+      const reach = 18 + Math.max(0, prog) * 72;
+      p.footFront = { x: hipX + f * reach, y: y + a.oy + 6 - Math.max(0, prog) * 4 };
+      p.footBack  = { x: hipX - f * 15, y: y };
+    } else if (st === 'hit') {
+      p.footFront = { x: hipX + f * 20, y: y };
+      p.footBack  = { x: hipX - f * 8, y: y - 4 };
+    } else if (st === 'punch') {
+      p.footFront = { x: hipX + f * 22, y: y };
+      p.footBack  = { x: hipX - f * 17, y: y };
+    } else {  // idle / block — боевая стойка
+      const sway = Math.sin(now / 700) * 1.5;
+      p.footFront = { x: hipX + f * (16 + sway), y: y };
+      p.footBack  = { x: hipX - f * (15 + sway), y: y };
+    }
+
+    /* --- цели для кистей --- */
+    const chinF = { x: shFront.x + f * 13, y: shY - 12 };   // передняя перчатка у подбородка
+    const chinB = { x: shBack.x + f * 8,  y: shY - 8 };
+
+    if (st === 'punch' && a) {
+      const reach = 16 + Math.max(0, prog) * 62;
+      p.handFront = { x: shFront.x + f * reach, y: y + a.oy + 6 };
+      p.handBack  = chinB;
+    } else if (st === 'kick') {
+      p.handFront = { x: shFront.x - f * 10, y: shY + 6 };   // руки на балансе
+      p.handBack  = { x: shBack.x - f * 20, y: shY - 6 };
+    } else if (st === 'block') {
+      p.handFront = { x: shFront.x + f * 20, y: shY - 14 };
+      p.handBack  = { x: shBack.x + f * 17, y: shY - 2 };
+    } else if (st === 'run') {
+      const ph = t * Math.PI * 2;
+      p.handFront = { x: shFront.x + f * (10 + Math.cos(ph + Math.PI) * 15), y: shY + 24 };
+      p.handBack  = { x: shBack.x + f * (6 + Math.cos(ph) * 15), y: shY + 26 };
+    } else if (st === 'air') {
+      p.handFront = { x: shFront.x + f * 20, y: shY - 16 };
+      p.handBack  = { x: shBack.x - f * 16, y: shY - 14 };
+    } else if (st === 'hit') {
+      p.handFront = { x: shFront.x + f * 6, y: shY - 22 };
+      p.handBack  = { x: shBack.x - f * 14, y: shY - 18 };
+    } else {  // idle — стойка с поднятыми кулаками
+      const b = Math.sin(now / 480) * 2;
+      p.handFront = { x: chinF.x, y: chinF.y + b };
+      p.handBack  = { x: chinB.x, y: chinB.y - b };
+    }
+
+    /* --- суставы через IK ---
+       колено выгибается вперёд (-facing), локоть — вниз/назад (+facing) */
+    p.kneeFront = solveIK(hipX + f * 5, hipY, p.footFront.x, p.footFront.y - 9, B.THIGH, B.SHIN, -f);
+    p.kneeBack  = solveIK(hipX - f * 5, hipY, p.footBack.x,  p.footBack.y - 9,  B.THIGH, B.SHIN, -f);
+    p.elbowFront = solveIK(shFront.x, shFront.y, p.handFront.x, p.handFront.y, B.UPPER_ARM, B.FOREARM, f);
+    p.elbowBack  = solveIK(shBack.x,  shBack.y,  p.handBack.x,  p.handBack.y,  B.UPPER_ARM, B.FOREARM, f);
+
+    // если цель дальше вытянутой руки/ноги — подтягиваем её к достижимой
+    p.handFront = { x: p.elbowFront.ex, y: p.elbowFront.ey };
+    p.handBack  = { x: p.elbowBack.ex,  y: p.elbowBack.ey };
+    p.footFront = { x: p.kneeFront.ex,  y: p.kneeFront.ey + 9 };
+    p.footBack  = { x: p.kneeBack.ex,   y: p.kneeBack.ey + 9 };
+
+    return p;
+  }
+
+  /* Прогресс выброса конечности: <0 в замахе → 1 на активных кадрах → назад. */
+  attackProgress(a) {
+    const f = this.atk.frame;
+    if (f <= a.startup) return -0.22 * (f / a.startup);
+    if (f <= a.startup + a.active) return 1;
+    return 1 - (f - a.startup - a.active) / a.recovery;
   }
 
   /* =================================================================
      ОТРИСОВКА
-     Персонаж — «кулак» с головой-фотографией. Всё рисуется кодом,
-     никаких спрайтов: легко менять пропорции ниже.
      ================================================================= */
   draw(c, now) {
-    const col = this.color;
+    // --- визуальные счётчики тикают по реальному времени (и на клиенте тоже) ---
+    const dt = this.lastDraw ? U.clamp(now - this.lastDraw, 0, 100) : 16;
+    this.lastDraw = now;
+    const k = dt / 16.67;
+    if (this.flash > 0) this.flash = Math.max(0, this.flash - k);
+    if (this.squash > 0) this.squash = Math.max(0, this.squash - k);
+    // приземление: ловим переход «в воздухе» -> «на земле» (работает у клиента)
+    if (this.prevState === 'air' && this.state !== 'air' && this.state !== 'dead') this.squash = 9;
+    // фаза бега крутится, только пока бежим
+    if (this.state === 'run') this.animT += dt / 1000 * 2.6;
+    this.prevState = this.state;
 
-    // сглаживание позиции (визуальный лаг ~2 кадра, убирает дёрганье)
+    // сглаживание позиции (убирает дрожь между снапшотами)
     if (this.rx === 0 && this.ry === 0) { this.rx = this.x; this.ry = this.y; }
-    this.rx = U.lerp(this.rx, this.x, 0.5);
-    this.ry = U.lerp(this.ry, this.y, 0.5);
+    this.rx = U.lerp(this.rx, this.x, U.clamp(0.35 * k, 0, 1));
+    this.ry = U.lerp(this.ry, this.y, U.clamp(0.45 * k, 0, 1));
+
     const x = this.rx, y = this.ry;
 
     /* --- тень на ближайшей поверхности --- */
@@ -312,153 +492,217 @@ class Fighter {
     c.globalAlpha = U.clamp(1 - (gy - y) / 500, .08, .38);
     c.fillStyle = '#000';
     c.beginPath();
-    c.ellipse(x, gy - 2, 40 * U.clamp(1 - (gy - y) / 900, .4, 1), 9, 0, 0, 7);
+    c.ellipse(x, gy - 2, 38 * U.clamp(1 - (gy - y) / 900, .4, 1), 8, 0, 0, 7);
     c.fill();
     c.restore();
 
     if (this.dead) { this.drawGhost(c, x, y, now); return; }
 
     c.save();
-
     // мигание при неуязвимости после респавна
-    if (this.invuln > 0 && Math.floor(now / 90) % 2 === 0) c.globalAlpha = 0.35;
+    if (this.invuln > 0 && Math.floor(now / 90) % 2 === 0) c.globalAlpha = 0.4;
 
-    // squash&stretch: приземление сплющивает, полёт вытягивает
-    const sq = this.squash / 8;
-    const sx = 1 + sq * 0.22 - U.clamp(this.vy / 90, -.1, .12);
-    const sy = 1 - sq * 0.22 + U.clamp(this.vy / 90, -.1, .12);
-    c.translate(x, y);
-    c.scale(sx, sy);
-    if (this.state === 'hit') c.rotate(Math.sin(now / 25) * 0.06 * this.facing);
-    c.translate(-x, -y);
+    const p = this.pose(now);
+    const col = this.color, sk = this.skin;
 
-    const BW = 74, BH = 74, LEG = 20;
-    const bodyBottom = y - LEG;
-    const bodyTop = bodyBottom - BH;
-    const headR = 31;
-    const headY = bodyTop - headR + 8;
-    const bob = Math.sin(this.animT * 6) * (this.state === 'run' ? 3 : 1.2);
-
-    const a = this.atk ? ATTACKS[this.atk.type] : null;
-    const prog = a ? this.attackProgress(a) : 0;   // 0..1 «выброс» конечности
-
-    /* --- ноги --- */
-    const legSwing = this.state === 'run' ? Math.sin(this.animT * 6) * 9 : 0;
-    this.limb(c, x - 15, bodyBottom - 4, x - 15 - legSwing, y, 15, U.shade(col, -.30));
-    if (this.state === 'kick' && a) {
-      // бьющая нога вылетает вперёд
-      const kx = x + this.facing * (26 + prog * (a.reach - 26));
-      const ky = y + a.oy + 44;
-      this.limb(c, x + 12, bodyBottom - 6, kx, ky, 17, U.shade(col, -.15));
-      c.fillStyle = U.shade(col, .12);
-      c.beginPath(); c.ellipse(kx, ky, 20, 14, 0, 0, 7); c.fill();
-    } else {
-      this.limb(c, x + 15, bodyBottom - 4, x + 15 + legSwing, y, 15, U.shade(col, -.30));
+    // лёгкое подрагивание при получении урона
+    if (this.state === 'hit') {
+      c.translate(x, y); c.rotate(Math.sin(now / 22) * 0.05 * this.facing); c.translate(-x, -y);
     }
 
-    /* --- тело-кулак --- */
-    c.save();
-    c.shadowColor = U.rgba(col, .55); c.shadowBlur = 26;
-    const g = c.createLinearGradient(x - BW / 2, bodyTop, x + BW / 2, bodyBottom);
-    g.addColorStop(0, U.shade(col, .16));
-    g.addColorStop(.55, col);
-    g.addColorStop(1, U.shade(col, -.34));
-    c.fillStyle = g;
-    rr(c, x - BW / 2, bodyTop + bob * .3, BW, BH, 22);
-    c.fill();
-    c.shadowBlur = 0;
+    /* ---------- ДАЛЬНЯЯ (задняя) РУКА И НОГА — темнее ---------- */
+    this.drawLeg(c, p, p.kneeBack, p.footBack, sk.d, U.shade(col, -.30), true);
+    this.drawArm(c, p.shBack, p.elbowBack, p.handBack, sk.d, U.shade(col, -.25));
 
-    // костяшки со стороны взгляда
-    c.fillStyle = U.shade(col, .22);
-    for (let i = 0; i < 4; i++) {
-      const ky = bodyTop + 14 + i * 15 + bob * .3;
-      const kx = x + this.facing * (BW / 2 - 7);
-      c.beginPath(); c.ellipse(kx, ky, 7, 6.5, 0, 0, 7); c.fill();
-    }
-    // контур
-    c.strokeStyle = U.rgba('#ffffff', .22); c.lineWidth = 2;
-    rr(c, x - BW / 2, bodyTop + bob * .3, BW, BH, 22); c.stroke();
-    c.restore();
+    /* ---------- ТОРС ---------- */
+    this.drawTorso(c, p, sk, col);
 
-    /* --- бьющая рука --- */
-    if (this.state === 'punch' && a) {
-      const px = x + this.facing * (30 + prog * (a.reach - 12));
-      const py = bodyTop + 26;
-      this.limb(c, x + this.facing * 20, bodyTop + 30, px, py, 16, U.shade(col, -.10));
-      c.save();
-      c.shadowColor = U.rgba(col, .8); c.shadowBlur = 20;
-      c.fillStyle = U.shade(col, .18);
-      c.beginPath(); c.arc(px, py, 19, 0, 7); c.fill();
-      c.strokeStyle = U.rgba('#fff', .35); c.lineWidth = 2; c.stroke();
-      c.restore();
-    } else if (this.state !== 'block') {
-      const swing = this.state === 'run' ? -Math.sin(this.animT * 6) * 8 : 0;
-      this.limb(c, x - this.facing * 22, bodyTop + 30, x - this.facing * 30 + swing, bodyTop + 58, 14, U.shade(col, -.24));
-    }
+    /* ---------- БЛИЖНЯЯ НОГА И РУКА ---------- */
+    this.drawLeg(c, p, p.kneeFront, p.footFront, sk.s, col, false);
+    this.drawArm(c, p.shFront, p.elbowFront, p.handFront, sk.s, col);
 
-    /* --- голова с фотографией --- */
-    const hx = x + this.facing * 4, hy = headY + bob;
-    c.save();
-    c.shadowColor = U.rgba(col, .7); c.shadowBlur = 22;
-    c.fillStyle = '#0b0b14';
-    c.beginPath(); c.arc(hx, hy, headR + 3, 0, 7); c.fill();
-    c.restore();
+    /* ---------- ГОЛОВА ---------- */
+    this.drawHead(c, p, now);
 
-    c.save();
-    c.beginPath(); c.arc(hx, hy, headR, 0, 7); c.clip();
-    if (this.avatar && this.avatar.complete) {
-      c.drawImage(this.avatar, hx - headR, hy - headR, headR * 2, headR * 2);
-    } else {
-      c.fillStyle = U.shade(col, -.2);
-      c.fillRect(hx - headR, hy - headR, headR * 2, headR * 2);
-    }
-    // вспышка урона поверх лица
-    if (this.flash > 0) {
-      c.fillStyle = `rgba(255,255,255,${this.flash / 14})`;
-      c.fillRect(hx - headR, hy - headR, headR * 2, headR * 2);
-    }
-    c.restore();
-
-    // ободок головы + «взгляд» в сторону движения
-    c.strokeStyle = col; c.lineWidth = 3.5;
-    c.beginPath(); c.arc(hx, hy, headR, 0, 7); c.stroke();
-    c.strokeStyle = U.rgba('#fff', .5); c.lineWidth = 1.5;
-    c.beginPath(); c.arc(hx, hy, headR - 4, -.9 + (this.facing > 0 ? 0 : Math.PI), .6 + (this.facing > 0 ? 0 : Math.PI));
-    c.stroke();
-
-    /* --- щит блока --- */
+    /* ---------- ЩИТ БЛОКА ---------- */
     if (this.blocking) {
       c.save();
       const t = now / 200;
-      c.strokeStyle = U.rgba('#ffffff', .55 + Math.sin(t) * .15);
+      c.strokeStyle = U.rgba('#ffffff', .5 + Math.sin(t) * .15);
       c.shadowColor = '#fff'; c.shadowBlur = 18; c.lineWidth = 4;
       c.beginPath();
-      c.arc(x + this.facing * 12, y - PHYS.H / 2, 62,
-            this.facing > 0 ? -1.1 : Math.PI - 1.1,
-            this.facing > 0 ? 1.1 : Math.PI + 1.1);
+      c.arc(p.shX + p.f * 10, y - 70, 60,
+            p.f > 0 ? -1.15 : Math.PI - 1.15,
+            p.f > 0 ? 1.15 : Math.PI + 1.15);
       c.stroke();
       c.restore();
     }
 
     c.restore();
 
-    this.drawHUD(c, x, headY - headR - 30);
+    this.drawHUD(c, x, y + BODY.HEAD_Y - BODY.HEAD_R - 26);
   }
 
-  /* Прогресс выброса конечности: 0 в замахе → 1 на активных кадрах → назад. */
-  attackProgress(a) {
-    const f = this.atk.frame;
-    if (f <= a.startup) return -0.25 * (f / a.startup);            // замах назад
-    if (f <= a.startup + a.active) return 1;
-    const back = (f - a.startup - a.active) / a.recovery;
-    return 1 - back;
-  }
-
-  /* Конечность = толстая линия с закруглением. */
-  limb(c, x1, y1, x2, y2, w, color) {
+  /* Нога: бедро + голень + ботинок. */
+  drawLeg(c, p, knee, foot, skin, bootCol, back) {
+    const B = BODY;
+    const hipX = p.hipX + p.f * (back ? -5 : 5);
     c.save();
-    c.strokeStyle = color; c.lineWidth = w; c.lineCap = 'round';
-    c.beginPath(); c.moveTo(x1, y1); c.lineTo(x2, y2); c.stroke();
+    c.lineCap = 'round';
+    c.strokeStyle = skin;
+    c.lineWidth = B.THIGH_W; c.beginPath(); c.moveTo(hipX, p.hipY); c.lineTo(knee.x, knee.y); c.stroke();
+    c.lineWidth = B.SHIN_W;  c.beginPath(); c.moveTo(knee.x, knee.y); c.lineTo(foot.x, foot.y - 9); c.stroke();
+    // колено
+    c.fillStyle = U.shade(skin, -.06);
+    c.beginPath(); c.arc(knee.x, knee.y, B.SHIN_W / 2 + 1, 0, 7); c.fill();
+    // ботинок
+    c.fillStyle = bootCol;
+    c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 1.5;
+    rr(c, foot.x - (p.f > 0 ? 5 : B.FOOT_L - 5), foot.y - 11, B.FOOT_L, 11, 4);
+    c.fill(); c.stroke();
+    c.restore();
+  }
+
+  /* Рука: плечо + предплечье + перчатка. */
+  drawArm(c, sh, elbow, hand, skin, gloveCol) {
+    const B = BODY;
+    c.save();
+    c.lineCap = 'round';
+    c.strokeStyle = skin;
+    c.lineWidth = B.ARM_W;     c.beginPath(); c.moveTo(sh.x, sh.y); c.lineTo(elbow.x, elbow.y); c.stroke();
+    c.lineWidth = B.FOREARM_W; c.beginPath(); c.moveTo(elbow.x, elbow.y); c.lineTo(hand.x, hand.y); c.stroke();
+    // локоть
+    c.fillStyle = U.shade(skin, -.06);
+    c.beginPath(); c.arc(elbow.x, elbow.y, B.FOREARM_W / 2 + .5, 0, 7); c.fill();
+    // перчатка
+    c.shadowColor = U.rgba(gloveCol, .8); c.shadowBlur = 12;
+    const g = c.createRadialGradient(hand.x - 3, hand.y - 4, 2, hand.x, hand.y, B.GLOVE_R + 2);
+    g.addColorStop(0, U.shade(gloveCol, .22));
+    g.addColorStop(1, U.shade(gloveCol, -.22));
+    c.fillStyle = g;
+    c.beginPath(); c.arc(hand.x, hand.y, B.GLOVE_R, 0, 7); c.fill();
+    c.shadowBlur = 0;
+    c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 1.5; c.stroke();
+    c.restore();
+  }
+
+  /* Торс: плечи → талия → таз, плюс шорты, пояс и намёк на мышцы. */
+  drawTorso(c, p, sk, col) {
+    const B = BODY;
+    const f = p.f;
+    const sL = p.shX - B.SHOULDER_HW, sR = p.shX + B.SHOULDER_HW;
+    const wY = (p.shY + p.hipY) / 2 + 4;
+    const wL = p.hipX - B.WAIST_HW, wR = p.hipX + B.WAIST_HW;
+    const hL = p.hipX - B.HIP_HW,   hR = p.hipX + B.HIP_HW;
+
+    c.save();
+
+    // силуэт
+    const g = c.createLinearGradient(sL, p.shY, sR, p.hipY);
+    g.addColorStop(0, U.shade(sk.s, .06));
+    g.addColorStop(.55, sk.s);
+    g.addColorStop(1, U.shade(sk.s, -.14));
+    c.fillStyle = g;
+    c.beginPath();
+    c.moveTo(sL, p.shY + 4);
+    c.quadraticCurveTo(sL - 2, wY - 6, wL, wY);
+    c.lineTo(hL, p.hipY + 6);
+    c.lineTo(hR, p.hipY + 6);
+    c.quadraticCurveTo(wR + 2, wY - 6, sR, p.shY + 4);
+    c.quadraticCurveTo(p.shX, p.shY - 12, sL, p.shY + 4);   // трапеции/плечи
+    c.closePath();
+    c.fill();
+
+    // тень с дальней стороны — объём
+    c.save();
+    c.clip();
+    const sg = c.createLinearGradient(p.shX - f * 26, 0, p.shX + f * 26, 0);
+    sg.addColorStop(0, 'rgba(0,0,0,.28)');
+    sg.addColorStop(.6, 'rgba(0,0,0,0)');
+    c.fillStyle = sg;
+    c.fillRect(sL - 10, p.shY - 20, (sR - sL) + 20, p.hipY - p.shY + 40);
+    c.restore();
+
+    // грудные и пресс
+    c.strokeStyle = U.rgba('#000000', .18); c.lineWidth = 2;
+    c.beginPath();
+    c.moveTo(p.shX + f * 2, p.shY + 6); c.lineTo(p.shX + f * 2, wY + 4);   // центральная линия
+    c.stroke();
+    c.beginPath();
+    c.arc(p.shX + f * 2, p.shY + 4, 15, .15, Math.PI - .15);               // грудь
+    c.stroke();
+    c.globalAlpha = .55;
+    for (let i = 0; i < 2; i++) {
+      const yy = wY - 6 + i * 9;
+      c.beginPath(); c.moveTo(p.hipX - 9, yy); c.lineTo(p.hipX + 9, yy); c.stroke();
+    }
+    c.globalAlpha = 1;
+
+    // шорты
+    c.fillStyle = U.shade(col, -.12);
+    c.beginPath();
+    c.moveTo(wL + 1, wY + 8);
+    c.lineTo(wR - 1, wY + 8);
+    c.lineTo(hR + 2, p.hipY + 14);
+    c.lineTo(p.hipX, p.hipY + 6);
+    c.lineTo(hL - 2, p.hipY + 14);
+    c.closePath();
+    c.fill();
+    // пояс
+    c.fillStyle = U.shade(col, .18);
+    rr(c, wL, wY + 4, wR - wL, 7, 3); c.fill();
+
+    // шея
+    c.strokeStyle = U.shade(sk.s, -.08); c.lineWidth = 15; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(p.headX - f * 1, p.neckY + 8); c.lineTo(p.headX, p.neckY - 4); c.stroke();
+
+    c.restore();
+  }
+
+  /* Голова: фото игрока в круге + ободок цвета игрока и повязка. */
+  drawHead(c, p, now) {
+    const R = BODY.HEAD_R;
+    const hx = p.headX, hy = p.headY, col = this.color;
+
+    c.save();
+    // подложка/свечение
+    c.shadowColor = U.rgba(col, .65); c.shadowBlur = 18;
+    c.fillStyle = '#0b0b14';
+    c.beginPath(); c.arc(hx, hy, R + 2.5, 0, 7); c.fill();
+    c.restore();
+
+    // само фото
+    c.save();
+    c.beginPath(); c.arc(hx, hy, R, 0, 7); c.clip();
+    if (this.avatar && this.avatar.complete && this.avatar.naturalWidth) {
+      // фото уже обрезано по черепу — рисуем как есть
+      c.drawImage(this.avatar, hx - R, hy - R, R * 2, R * 2);
+    } else {
+      c.fillStyle = this.skin.s;
+      c.fillRect(hx - R, hy - R, R * 2, R * 2);
+    }
+    if (this.flash > 0) {
+      c.fillStyle = `rgba(255,255,255,${U.clamp(this.flash / 14, 0, .8)})`;
+      c.fillRect(hx - R, hy - R, R * 2, R * 2);
+    }
+    c.restore();
+
+    // ободок
+    c.save();
+    c.strokeStyle = col; c.lineWidth = 3;
+    c.beginPath(); c.arc(hx, hy, R, 0, 7); c.stroke();
+
+    // повязка на лбу — заодно подсказка, куда смотрит боец
+    c.strokeStyle = U.shade(col, .12); c.lineWidth = 6;
+    c.beginPath();
+    c.arc(hx, hy, R - 2.5, Math.PI + .35, Math.PI * 2 - .35);
+    c.stroke();
+    // хвостик повязки сзади
+    c.lineWidth = 4; c.lineCap = 'round';
+    c.beginPath();
+    c.moveTo(hx - p.f * (R - 4), hy - 8);
+    c.quadraticCurveTo(hx - p.f * (R + 12), hy - 4 + Math.sin(now / 180) * 3, hx - p.f * (R + 18), hy + 6);
+    c.stroke();
     c.restore();
   }
 
@@ -475,7 +719,6 @@ class Fighter {
   drawHUD(c, x, y) {
     const w = 92, h = 9;
     c.save();
-    // ник
     c.font = '600 13px "JetBrains Mono", monospace';
     c.textAlign = 'center';
     c.fillStyle = 'rgba(0,0,0,.6)';
@@ -483,20 +726,17 @@ class Fighter {
     c.fillStyle = this.color;
     c.fillText(this.name, x, y - 7);
 
-    // фон полоски
     c.fillStyle = 'rgba(0,0,0,.72)';
     rr(c, x - w / 2 - 2, y - 2, w + 4, h + 4, 6); c.fill();
 
-    // заливка
-    const p = U.clamp(this.hp / PHYS.MAX_HP, 0, 1);
+    const pr = U.clamp(this.hp / PHYS.MAX_HP, 0, 1);
     const g = c.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
-    if (p > .5)      { g.addColorStop(0, '#7cff5a'); g.addColorStop(1, '#39d97a'); }
-    else if (p > .25){ g.addColorStop(0, '#ffd23a'); g.addColorStop(1, '#ff9d2e'); }
-    else             { g.addColorStop(0, '#ff5a5a'); g.addColorStop(1, '#ff2d6f'); }
+    if (pr > .5)       { g.addColorStop(0, '#7cff5a'); g.addColorStop(1, '#39d97a'); }
+    else if (pr > .25) { g.addColorStop(0, '#ffd23a'); g.addColorStop(1, '#ff9d2e'); }
+    else               { g.addColorStop(0, '#ff5a5a'); g.addColorStop(1, '#ff2d6f'); }
     c.fillStyle = g;
-    rr(c, x - w / 2, y, w * p, h, 4); c.fill();
+    rr(c, x - w / 2, y, w * pr, h, 4); c.fill();
 
-    // деления по 25 HP
     c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
       const sx = x - w / 2 + (w * i) / 4;
@@ -505,14 +745,14 @@ class Fighter {
     c.restore();
   }
 
-  /* Отрисовка «духа» павшего бойца + таймер респавна. */
+  /* «Дух» павшего бойца + таймер респавна. */
   drawGhost(c, x, y, now) {
     c.save();
     c.globalAlpha = .30 + Math.sin(now / 340) * .08;
     const fy = y - 120 - Math.sin(now / 700) * 12;
     c.fillStyle = U.rgba(this.color, .5);
     c.beginPath(); c.arc(x, fy, 30, 0, 7); c.fill();
-    if (this.avatar && this.avatar.complete) {
+    if (this.avatar && this.avatar.complete && this.avatar.naturalWidth) {
       c.save();
       c.beginPath(); c.arc(x, fy, 27, 0, 7); c.clip();
       c.filter = 'grayscale(1)';

@@ -29,6 +29,8 @@ const UI = (() => {
   function showScreen(name) {
     ['menu', 'lobby', 'game'].forEach(s =>
       $('#screen-' + s).classList.toggle('active', s === name));
+    // в лобби заранее подтягиваем детектор лиц, чтобы первая загрузка фото не ждала
+    if (name === 'lobby') Face.warmup();
     if (name !== 'game') { $('#win-overlay').classList.remove('on'); $('#death-overlay').classList.remove('on'); }
   }
 
@@ -174,15 +176,29 @@ const UI = (() => {
     });
   }
 
-  /* Загрузка фото лица: сжимаем в квадрат 180x180 прямо в браузере. */
+  /*
+    Загрузка фото лица: ищем лицо и вырезаем голову (js/face.js).
+    Если детектор не сработал — честно говорим об этом и берём центр кадра.
+  */
   async function loadFace(file) {
+    const st = $('#face-status');
+    const setStatus = (txt, cls) => { st.textContent = txt; st.className = 'face-status ' + (cls || ''); };
+
+    setStatus('Ищем лицо на фото…', 'busy');
     try {
-      me.avatar = await U.fileToDataURL(file, 180, 180, .82, 'cover');
+      const res = await Face.cropHead(file);
+      me.avatar = res.dataURL;
       drawAvatarPreview(me.avatar);
       $('#avatar-drop').classList.add('has-photo');
       profileChanged();
       U.sfx.join();
-    } catch (e) { U.toast('Не удалось прочитать картинку'); }
+
+      if (res.detected) setStatus('Лицо найдено — голова вырезана автоматически.', 'ok');
+      else setStatus('Лицо не распозналось — обрезали по центру. Попробуй фото, где лицо крупнее и анфас.', 'warn');
+    } catch (e) {
+      setStatus('Не удалось прочитать картинку.', 'warn');
+      U.toast('Не удалось прочитать картинку');
+    }
   }
 
   /* Загрузка фона арены: 1280x720, отправляется клиентам в момент старта. */
