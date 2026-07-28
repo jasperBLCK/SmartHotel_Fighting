@@ -25,9 +25,10 @@ const Game = (() => {
   let fighters = new Map();       // pid -> Fighter
   let order = [];                 // порядок слотов (для цветов и табло)
 
-  let arenaImg = null;            // фото арены (или null → рисуем процедурный фон)
+  let arenaImg = null;            // фото арены (или null → рисуем процедурный двор)
   let particles = [];
   let floaters = [];              // всплывающие цифры урона
+  let decals = [];                // следы крови на земле
   let shake = 0, hitstop = 0;
 
   // ---- инпут ----
@@ -114,7 +115,7 @@ const Game = (() => {
     myPid = cfg.myPid;
     killLimit = cfg.killLimit | 0;
     over = null;
-    particles = []; floaters = []; shake = 0; hitstop = 0;
+    particles = []; floaters = []; decals = []; shake = 0; hitstop = 0;
     snaps = []; lastFxSeq = -1;
     fighters = new Map(); order = [];
     inputs.clear(); prevInputs.clear();
@@ -126,9 +127,9 @@ const Game = (() => {
 
     // бойцы + аватары
     await Promise.all(cfg.players.map(async (p, i) => {
-      const f = new Fighter(p.pid, i, p.name);
-      const src = p.avatar || U.defaultAvatar(f.color);
-      try { f.avatar = await U.loadImage(src); } catch (e) { }
+      const f = new Fighter(p.pid, i, p.name, p.char);
+      // фото нет — оставляем null, тогда рисуется процедурная голова бойца
+      if (p.avatar) { try { f.avatar = await U.loadImage(p.avatar); } catch (e) { } }
       // разводим по разным спавнам
       const sp = ARENA.SPAWNS[i % ARENA.SPAWNS.length];
       f.x = sp.x; f.y = sp.y; f.invuln = PHYS.INVULN_MS;
@@ -205,6 +206,8 @@ const Game = (() => {
       prevInputs.set(pid, mask);
       f.step(mask, pressed, dt);
       if (f.fxJump) { f.fxJump = false; addFx({ k: 'jump', x: f.x, y: f.y, c: f.color }); }
+      // попытка ударить без выносливости
+      if (f.fxNoStam) { f.fxNoStam = false; addFx({ k: 'nostam', x: f.x, y: f.y - 130, c: f.color }); }
     });
 
     // 2) мягкое расталкивание, чтобы бойцы не слипались в одну точку
@@ -235,9 +238,21 @@ const Game = (() => {
 
           const cx = (hb.x + hb.w / 2 + def.x) / 2;
           const cy = hb.y + hb.h / 2;
-          addFx({ k: res.blocked ? 'block' : 'hit', x: cx, y: cy, c: def.color,
-                  d: res.dmg, dir: Math.sign(def.x - att.x) || 1, big: hb.type === 'kick' });
-          hitstop = res.killed ? 7 : (hb.type === 'kick' ? 4 : 2);
+          const dir = Math.sign(def.x - att.x) || 1;
+
+          if (res.broken) {
+            // блок проломлен — отдельный эффект и долгий хитстоп
+            addFx({ k: 'break', x: def.x, y: def.y - 96, c: def.color, d: res.dmg, dir });
+            hitstop = 9;
+          } else {
+            addFx({
+              k: res.blocked ? 'block' : 'hit',
+              x: cx, y: cy, c: def.color, d: res.dmg, dir,
+              big: hb.heavy, kind: hb.kind,
+              wound: res.blocked ? 0 : U.clamp(def.woundLevel + hb.dmg / 40, .25, 1),
+            });
+            hitstop = res.killed ? 7 : (hb.heavy ? 4 : 2);
+          }
 
           if (res.killed) {
             if (att.pid !== def.pid) att.kills++;
@@ -366,19 +381,72 @@ const Game = (() => {
   /* =================================================================
      ЭФФЕКТЫ
      ================================================================= */
+  /* Ближайшая поверхность под точкой — чтобы кровь ложилась на пол/платформу. */
+  function surfaceUnder(x, y) {
+    let best = ARENA.GROUND;
+    for (const p of ARENA.PLATFORMS) {
+      if (x > p.x && x < p.x + p.w && p.y >= y - 2 && p.y < best) best = p.y;
+    }
+    return best;
+  }
+
+  /* Пятно крови на земле (живёт ~25 секунд и выцветает). */
+  function addDecal(x, y, r) {
+    decals.push({ x, y, r, sx: U.rand(.7, 1.5), rot: U.rand(0, 6.28), life: 1500, max: 1500 });
+    if (decals.length > 140) decals.shift();
+  }
+
+  /* Брызги крови: летят, притягиваются вниз, оставляют пятна. */
+  function bloodSpray(x, y, dir, amount, force) {
+    for (let i = 0; i < amount; i++) {
+      const a = U.rand(-1.1, 1.1) + (dir > 0 ? 0 : Math.PI);
+      const sp = U.rand(2, force);
+      particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - U.rand(1, 4),
+        life: U.rand(26, 60), max: 60, c: i % 4 ? '#b8121b' : '#e03a2a',
+        r: U.rand(1.6, 4.2), g: .55, blood: 1,
+      });
+    }
+  }
+
   function spawnFx(fx) {
     const { k, x, y, c } = fx;
     if (k === 'hit') {
-      const n = fx.big ? 20 : 12;
+      const n = fx.big ? 18 : 11;
       for (let i = 0; i < n; i++) {
         const a = U.rand(0, 6.28), sp = U.rand(2, fx.big ? 13 : 9);
         particles.push({ x, y, vx: Math.cos(a) * sp + (fx.dir || 0) * 3, vy: Math.sin(a) * sp - 2,
-                         life: U.rand(18, 34), max: 34, c: i % 3 ? '#fff' : c, r: U.rand(2, 5), g: .35 });
+                         life: U.rand(16, 30), max: 30, c: i % 3 ? '#fff' : c, r: U.rand(2, 5), g: .35 });
       }
       particles.push({ ring: 1, x, y, life: 14, max: 14, c: '#fff', r: fx.big ? 18 : 12 });
+      // кровь тем сильнее, чем хуже дела у получившего
+      const w = fx.wound || .3;
+      bloodSpray(x, y, fx.dir || 1, Math.round(4 + w * 16 + (fx.big ? 5 : 0)), 7 + w * 7);
       floaters.push({ x, y: y - 12, vy: -1.5, life: 46, max: 46, txt: '-' + fx.d, c: '#fff', size: fx.big ? 30 : 22 });
       shake = Math.min(22, shake + (fx.big ? 13 : 7));
       fx.big ? U.sfx.kick() : U.sfx.punch();
+    }
+    else if (k === 'break') {
+      // пролом блока: жёлтая вспышка, осколки и крик
+      for (let i = 0; i < 26; i++) {
+        const a = U.rand(0, 6.28), sp = U.rand(3, 12);
+        particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 3,
+                         life: U.rand(20, 42), max: 42, c: i % 2 ? '#ffd23a' : '#fff8d0',
+                         r: U.rand(2, 5), g: .3 });
+      }
+      particles.push({ ring: 1, x, y, life: 22, max: 22, c: '#ffd23a', r: 26 });
+      floaters.push({ x, y: y - 20, vy: -1.4, life: 62, max: 62, txt: 'БЛОК ПРОБИТ!', c: '#ffd23a', size: 30 });
+      bloodSpray(x, y, fx.dir || 1, 6, 7);
+      shake = Math.min(26, shake + 18);
+      U.sfx.guardBreak();
+    }
+    else if (k === 'nostam') {
+      floaters.push({ x, y, vy: -1.1, life: 40, max: 40, txt: 'ВЫДОХСЯ', c: '#ff9d2e', size: 20 });
+      for (let i = 0; i < 5; i++) {
+        particles.push({ x: x + U.rand(-8, 8), y, vx: U.rand(-1.5, 1.5), vy: U.rand(-.5, -2),
+                         life: 20, max: 20, c: 'rgba(200,220,255,.5)', r: U.rand(2, 4), g: 0 });
+      }
+      U.sfx.winded();
     }
     else if (k === 'block') {
       for (let i = 0; i < 10; i++) {
@@ -392,12 +460,16 @@ const Game = (() => {
       U.sfx.block();
     }
     else if (k === 'kill') {
-      for (let i = 0; i < 46; i++) {
+      for (let i = 0; i < 34; i++) {
         const a = U.rand(0, 6.28), sp = U.rand(3, 16);
         particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 3,
                          life: U.rand(30, 70), max: 70, c: i % 2 ? c : '#fff', r: U.rand(2, 6), g: .3 });
       }
+      bloodSpray(x, y, fx.dir || 1, 34, 15);
       particles.push({ ring: 1, x, y, life: 26, max: 26, c, r: 30 });
+      // лужа под телом
+      const gy = surfaceUnder(x, y);
+      for (let i = 0; i < 5; i++) addDecal(x + U.rand(-30, 30), gy - 2, U.rand(8, 20));
       shake = 26;
       U.sfx.death();
     }
@@ -426,8 +498,14 @@ const Game = (() => {
       if (p.ring) return p.life > 0;
       p.x += p.vx * k; p.y += p.vy * k;
       p.vy += (p.g || 0) * k; p.vx *= 0.97; p.vy *= 0.99;
+      // капля крови долетела до пола — оставляем пятно
+      if (p.blood && p.vy > 0) {
+        const gy = surfaceUnder(p.x, p.y);
+        if (p.y >= gy) { addDecal(p.x, gy - 1, p.r * U.rand(1.3, 2.6)); return false; }
+      }
       return p.life > 0;
     });
+    decals = decals.filter(d => (d.life -= k) > 0);
     floaters = floaters.filter(f => {
       f.life -= k; f.y += f.vy * k; f.vy *= 0.96;
       return f.life > 0;
@@ -454,6 +532,7 @@ const Game = (() => {
 
     drawBackground(now);
     drawPlatforms(now);
+    drawDecals();
 
     // бойцы: сначала мёртвые/дальние, потом живые
     const list = order.map(p => fighters.get(p)).filter(Boolean);
@@ -484,62 +563,156 @@ const Game = (() => {
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, ARENA.W, ARENA.H);
     } else {
-      // процедурный неоновый фон
-      const g = ctx.createLinearGradient(0, 0, 0, ARENA.H);
-      g.addColorStop(0, '#0a0a1c'); g.addColorStop(.6, '#140a24'); g.addColorStop(1, '#05050c');
-      ctx.fillStyle = g; ctx.fillRect(0, 0, ARENA.W, ARENA.H);
-
-      // «солнце»
-      ctx.save();
-      ctx.globalAlpha = .5;
-      const s = ctx.createRadialGradient(ARENA.W / 2, 470, 20, ARENA.W / 2, 470, 320);
-      s.addColorStop(0, 'rgba(255,45,111,.85)'); s.addColorStop(1, 'rgba(255,45,111,0)');
-      ctx.fillStyle = s; ctx.beginPath(); ctx.arc(ARENA.W / 2, 470, 320, 0, 7); ctx.fill();
-      ctx.restore();
-
-      // перспективная сетка
-      ctx.save();
-      ctx.strokeStyle = 'rgba(0,229,255,.20)'; ctx.lineWidth = 2;
-      for (let i = -10; i <= 10; i++) {
-        ctx.beginPath();
-        ctx.moveTo(ARENA.W / 2 + i * 40, 520);
-        ctx.lineTo(ARENA.W / 2 + i * 420, ARENA.H);
-        ctx.stroke();
-      }
-      for (let i = 0; i < 12; i++) {
-        const y = 520 + Math.pow(i / 11, 2.4) * (ARENA.H - 520);
-        ctx.globalAlpha = .10 + i * .02;
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(ARENA.W, y); ctx.stroke();
-      }
-      ctx.restore();
+      drawCourtyard(now);
     }
   }
 
+  /* Стабильный псевдослучайный шум по индексу — фон не «кипит» между кадрами. */
+  function n1(i) { const s = Math.sin(i * 127.1) * 43758.5453; return s - Math.floor(s); }
+
+  /*
+    Двор: панельки с горящими окнами, ряд гаражей, фонарь и снег.
+    Всё рисуется кодом — можно заменить своим фото арены в лобби.
+  */
+  function drawCourtyard(now) {
+    const W = ARENA.W, H = ARENA.H;
+
+    // ночное небо
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0b1020');
+    g.addColorStop(.55, '#141a2c');
+    g.addColorStop(1, '#0a0c14');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    // дальние панельные дома
+    for (let b = 0; b < 7; b++) {
+      const bw = 150 + n1(b) * 120;
+      const bx = b * 240 - 60 + n1(b + 30) * 40;
+      const bh = 300 + n1(b + 60) * 210;
+      const by = 560 - bh;
+      ctx.fillStyle = `rgba(${18 + b}, ${20 + b * 2}, ${34 + b * 2}, 1)`;
+      ctx.fillRect(bx, by, bw, bh);
+
+      // окна: часть горит тёплым
+      for (let wy = by + 18; wy < 545; wy += 30) {
+        for (let wx = bx + 12; wx < bx + bw - 16; wx += 26) {
+          const r = n1(wx * 0.37 + wy * 0.11 + b);
+          if (r > 0.62) {
+            ctx.fillStyle = r > 0.93 ? 'rgba(255,214,140,.85)'
+                          : r > 0.78 ? 'rgba(255,196,110,.55)' : 'rgba(160,190,230,.30)';
+            ctx.fillRect(wx, wy, 13, 17);
+          }
+        }
+      }
+    }
+
+    // ряд гаражей — кирпич и ржавые ворота
+    const gy0 = 560, gh = 130;
+    ctx.fillStyle = '#3a2a24';
+    ctx.fillRect(0, gy0, W, gh);
+    for (let x = 0; x < W; x += 96) {
+      const r = n1(x);
+      ctx.fillStyle = r > .5 ? '#6b4a34' : '#5c3f2c';
+      ctx.fillRect(x + 4, gy0 + 10, 88, gh - 16);
+      // ворота
+      ctx.fillStyle = r > .66 ? '#41545c' : (r > .33 ? '#5a4a3a' : '#4a5a44');
+      ctx.fillRect(x + 14, gy0 + 26, 68, gh - 34);
+      ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 2;
+      for (let i = 1; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(x + 14 + i * 17, gy0 + 26);
+        ctx.lineTo(x + 14 + i * 17, gy0 + gh - 8);
+        ctx.stroke();
+      }
+    }
+    // кирпичная кладка поверх
+    ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 1;
+    for (let y = gy0; y < gy0 + gh; y += 11) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    }
+
+    // фонарь и его пятно света
+    const lx = 1290, ly = 250;
+    ctx.strokeStyle = '#22242c'; ctx.lineWidth = 9; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(lx, ARENA.GROUND); ctx.lineTo(lx, ly); ctx.stroke();
+    ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.moveTo(lx, ly); ctx.quadraticCurveTo(lx - 40, ly - 16, lx - 74, ly + 4); ctx.stroke();
+    const flick = 0.82 + Math.sin(now / 90) * 0.05 + n1(Math.floor(now / 400)) * 0.13;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const lamp = ctx.createRadialGradient(lx - 78, ly + 8, 4, lx - 78, ly + 8, 520);
+    lamp.addColorStop(0, `rgba(255,196,110,${.55 * flick})`);
+    lamp.addColorStop(.35, `rgba(255,170,80,${.16 * flick})`);
+    lamp.addColorStop(1, 'rgba(255,150,60,0)');
+    ctx.fillStyle = lamp;
+    ctx.beginPath(); ctx.arc(lx - 78, ly + 8, 520, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = `rgba(255,226,170,${flick})`;
+    ctx.beginPath(); ctx.ellipse(lx - 78, ly + 10, 13, 8, 0, 0, 7); ctx.fill();
+
+    // снег
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    for (let i = 0; i < 90; i++) {
+      const sp = 18 + n1(i) * 26;
+      const sx = (n1(i + 7) * W + now / 1000 * (6 + n1(i) * 10)) % W;
+      const sy = (n1(i + 11) * H + now / 1000 * sp) % H;
+      const r = .8 + n1(i + 3) * 1.9;
+      ctx.globalAlpha = .25 + n1(i + 5) * .45;
+      ctx.beginPath(); ctx.arc(sx, sy, r, 0, 7); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* Бетонные плиты и асфальт: дворовая фактура вместо неоновых панелей. */
   function drawPlatforms(now) {
-    const drawSlab = (x, y, w, h, glow) => {
+    const slab = (x, y, w, h) => {
       ctx.save();
-      ctx.shadowColor = glow; ctx.shadowBlur = 26;
       const g = ctx.createLinearGradient(0, y, 0, y + h);
-      g.addColorStop(0, 'rgba(40,40,64,.98)');
-      g.addColorStop(1, 'rgba(12,12,22,.96)');
+      g.addColorStop(0, '#4a4a52');
+      g.addColorStop(.16, '#33333c');
+      g.addColorStop(1, '#1b1b22');
       ctx.fillStyle = g;
-      rr(ctx, x, y, w, h, 8); ctx.fill();
-      // неоновая кромка сверху
-      ctx.shadowBlur = 18;
-      ctx.fillStyle = glow;
-      rr(ctx, x, y - 3, w, 5, 3); ctx.fill();
+      rr(ctx, x, y, w, h, 4); ctx.fill();
+
+      // снежная шапка сверху
+      ctx.fillStyle = 'rgba(226,236,248,.82)';
+      rr(ctx, x, y - 4, w, 7, 3); ctx.fill();
+      // сколы и трещины
+      ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1.5;
+      for (let i = 1; i * 90 < w; i++) {
+        const cx = x + i * 90 + n1(x + i) * 20;
+        ctx.beginPath(); ctx.moveTo(cx, y + 4); ctx.lineTo(cx + 4, y + h); ctx.stroke();
+      }
       ctx.restore();
     };
 
-    ARENA.PLATFORMS.forEach((p, i) => drawSlab(p.x, p.y, p.w, 26, i === 2 ? '#7cff5a' : '#00e5ff'));
-    drawSlab(-10, ARENA.GROUND, ARENA.W + 20, ARENA.H - ARENA.GROUND + 10, '#ff2d6f');
+    ARENA.PLATFORMS.forEach(p => slab(p.x, p.y, p.w, 26));
 
-    // полосы на полу
+    // асфальт
     ctx.save();
-    ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 2;
-    for (let x = 0; x < ARENA.W; x += 64) {
-      ctx.beginPath(); ctx.moveTo(x, ARENA.GROUND + 8); ctx.lineTo(x - 40, ARENA.H); ctx.stroke();
+    const gy = ARENA.GROUND;
+    const g = ctx.createLinearGradient(0, gy, 0, ARENA.H);
+    g.addColorStop(0, '#2e2f36');
+    g.addColorStop(1, '#16171c');
+    ctx.fillStyle = g;
+    ctx.fillRect(-10, gy, ARENA.W + 20, ARENA.H - gy + 10);
+    // укатанный снег у кромки
+    ctx.fillStyle = 'rgba(226,236,248,.72)';
+    ctx.fillRect(-10, gy - 4, ARENA.W + 20, 7);
+    // выбоины
+    ctx.fillStyle = 'rgba(0,0,0,.28)';
+    for (let i = 0; i < 26; i++) {
+      const px = n1(i) * ARENA.W, py = gy + 14 + n1(i + 50) * (ARENA.H - gy - 24);
+      ctx.beginPath();
+      ctx.ellipse(px, py, 10 + n1(i + 9) * 26, 3 + n1(i + 4) * 5, 0, 0, 7);
+      ctx.fill();
     }
+    // разметка
+    ctx.strokeStyle = 'rgba(255,214,140,.10)'; ctx.lineWidth = 3;
+    ctx.setLineDash([34, 26]);
+    ctx.beginPath(); ctx.moveTo(0, gy + 56); ctx.lineTo(ARENA.W, gy + 56); ctx.stroke();
+    ctx.setLineDash([]);
     ctx.restore();
   }
 
@@ -551,6 +724,24 @@ const Game = (() => {
     ctx.beginPath();
     ctx.moveTo(f.x, y + 12); ctx.lineTo(f.x - 9, y); ctx.lineTo(f.x + 9, y);
     ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  /* Пятна крови на асфальте. */
+  function drawDecals() {
+    ctx.save();
+    decals.forEach(d => {
+      const a = U.clamp(d.life / d.max, 0, 1);
+      ctx.globalAlpha = a * 0.7;
+      ctx.fillStyle = '#7d0d13';
+      ctx.save();
+      ctx.translate(d.x, d.y);
+      ctx.rotate(d.rot);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, d.r * d.sx, d.r * 0.42, 0, 0, 7);
+      ctx.fill();
+      ctx.restore();
+    });
     ctx.restore();
   }
 

@@ -39,12 +39,20 @@
       <div class="controls-title">УПРАВЛЕНИЕ</div>
       <div class="controls-grid">
         <div><kbd>A</kbd><kbd>D</kbd> / <kbd>←</kbd><kbd>→</kbd><span>движение</span></div>
-        <div><kbd>W</kbd> / <kbd>Space</kbd><span>прыжок</span></div>
-        <div><kbd>J</kbd><span>удар рукой</span></div>
-        <div><kbd>K</kbd><span>удар ногой</span></div>
-        <div><kbd>L</kbd> / <kbd>Shift</kbd><span>блок</span></div>
+        <div><kbd>W</kbd> / <kbd>Space</kbd><span>прыжок (двойной)</span></div>
+        <div><kbd>L</kbd> / <kbd>Shift</kbd><span>блок (ломается!)</span></div>
+        <div><kbd>J</kbd><span>джеб</span></div>
+        <div><kbd>→</kbd>+<kbd>J</kbd><span>хук</span></div>
+        <div><kbd>S</kbd>+<kbd>J</kbd><span>апперкот</span></div>
+        <div><kbd>K</kbd><span>хай-кик</span></div>
+        <div><kbd>→</kbd>+<kbd>K</kbd><span>лоу-кик</span></div>
+        <div><kbd>S</kbd>+<kbd>K</kbd><span>подсечка</span></div>
+        <div>в прыжке <kbd>J</kbd><span>удар с воздуха</span></div>
+        <div>в прыжке <kbd>K</kbd><span>дайв-кик</span></div>
         <div><kbd>S</kbd> / <kbd>↓</kbd><span>спуск с платформы</span></div>
       </div>
+      <div class="controls-note">Удары тратят выносливость. Кончилась — отдышка,
+        боец медленный и бить не может. Блок держит не бесконечно: пробьют — оглушение.</div>
     </div>
   </div>
 </section>
@@ -79,6 +87,12 @@
         <div class="me-note">Фото никуда не отправляется на сервер: распознавание и обрезка идут прямо
           в браузере, дальше только P2P другим игрокам.</div>
       </div>
+    </div>
+
+    <!-- Выбор персонажа -->
+    <div class="char-block">
+      <div class="block-title">ВЫБЕРИ БОЙЦА</div>
+      <div class="char-grid" id="char-grid"></div>
     </div>
 
     <!-- Список подключившихся -->

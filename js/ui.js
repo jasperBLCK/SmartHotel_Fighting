@@ -2,7 +2,7 @@
    ui.js — экраны, лобби, склейка сети и игры.
 
    Сообщения протокола:
-     клиент -> хост : {t:'hi', n:ник, a:аватар}   — профиль игрока
+     клиент -> хост : {t:'hi', n:ник, a:аватар, c:персонаж} — профиль игрока
                       {t:'in', k:маска}           — инпут
      хост -> клиентам: {t:'lb', p:[...], kl}      — состояние лобби
                       {t:'go', p:[...], a:фон, kl}— старт боя
@@ -17,8 +17,8 @@ const UI = (() => {
   const MAX_PLAYERS = 4;
 
   let isHost = false;
-  let me = { name: '', avatar: null };     // мой профиль (аватар — dataURL)
-  let players = [];                        // [{pid, name, avatar}] — порядок = слоты
+  let me = { name: '', avatar: null, char: CHARACTERS[0].id };   // мой профиль
+  let players = [];                        // [{pid, name, avatar, char}] — порядок = слоты
   let arenaData = null;                    // фото арены (только у хоста)
   let killLimit = 10;
   let hudSig = '';                         // подпись табло, чтобы не дёргать DOM зря
@@ -52,6 +52,35 @@ const UI = (() => {
     me.name = 'Боец ' + U.randInt(10, 99);
     $('#input-name').value = me.name;
     drawAvatarPreview(null);
+    renderChars();
+  }
+
+  /* Карточки выбора персонажа. */
+  function renderChars() {
+    const grid = $('#char-grid');
+    grid.innerHTML = '';
+    CHARACTERS.forEach(ch => {
+      const el = document.createElement('div');
+      el.className = 'char-card' + (ch.id === me.char ? ' on' : '');
+      const bar = (label, v) => `
+        <div class="cstat"><i>${label}</i><div class="cbar"><span style="width:${Math.round(U.clamp(v, 0, 1) * 100)}%"></span></div></div>`;
+      el.innerHTML = `
+        <div class="cname"><span class="cdot"></span>${ch.name}</div>
+        <div class="cinfo">${escapeHtml(ch.info)}</div>
+        <div class="cstats">
+          ${bar('HP',   (ch.st.hp - 85) / 45)}
+          ${bar('УДАР', (ch.st.dmg - 0.9) / 0.35)}
+          ${bar('СКОР', (ch.st.spd - 0.85) / 0.35)}
+          ${bar('ВЫНО', (ch.st.stam - 88) / 46)}
+        </div>`;
+      el.addEventListener('click', () => {
+        me.char = ch.id;
+        renderChars();
+        profileChanged();
+        U.sfx.ui();
+      });
+      grid.appendChild(el);
+    });
   }
 
   /* =================================================================
@@ -71,7 +100,7 @@ const UI = (() => {
       Net.createRoom(
         (code) => {
           isHost = true;
-          players = [{ pid: 'host', name: me.name, avatar: me.avatar }];
+          players = [{ pid: 'host', name: me.name, avatar: me.avatar, char: me.char }];
           $('#btn-create').disabled = false;
           $('#room-code').textContent = code;
           $('#host-panel').style.display = 'flex';
@@ -228,7 +257,7 @@ const UI = (() => {
   function profileChanged() {
     if (isHost) {
       const meRow = players.find(p => p.pid === 'host');
-      if (meRow) { meRow.name = me.name; meRow.avatar = me.avatar; }
+      if (meRow) { meRow.name = me.name; meRow.avatar = me.avatar; meRow.char = me.char; }
       broadcastLobby();
       renderPlayers();
     } else {
@@ -236,7 +265,7 @@ const UI = (() => {
     }
   }
   function sendProfile() {
-    Net.toHost({ t: 'hi', n: me.name, a: me.avatar });
+    Net.toHost({ t: 'hi', n: me.name, a: me.avatar, c: me.char });
   }
 
   function broadcastLobby() {
@@ -259,9 +288,11 @@ const UI = (() => {
       } else {
         const isMe = (p.pid === 'host' && isHost) || (p.pid === Net.myId);
         el.className = 'pslot filled';
+        const ch = CHARACTERS.find(c => c.id === p.char) || CHARACTERS[0];
         el.innerHTML = `
           <img class="pav" src="${p.avatar || U.defaultAvatar(color)}" alt="">
           <div class="pname">${escapeHtml(p.name)}</div>
+          <div class="pchar">${ch.name}</div>
           <div class="ptag">${p.pid === 'host' ? 'ХОСТ' : 'ИГРОК'}${isMe ? ' · ТЫ' : ''}</div>`;
       }
       strip.appendChild(el);
@@ -294,10 +325,10 @@ const UI = (() => {
     Net.on('hi', (from, msg) => {
       if (!isHost) return;
       const row = players.find(p => p.pid === from);
-      if (row) { row.name = msg.n || row.name; row.avatar = msg.a || row.avatar; }
+      if (row) { row.name = msg.n || row.name; row.avatar = msg.a || row.avatar; row.char = msg.c || row.char; }
       else {
         if (players.length >= MAX_PLAYERS) return;
-        players.push({ pid: from, name: msg.n || 'Игрок', avatar: msg.a || null });
+        players.push({ pid: from, name: msg.n || 'Игрок', avatar: msg.a || null, char: msg.c || CHARACTERS[0].id });
         U.toast((msg.n || 'Игрок') + ' подключился');
         U.sfx.join();
       }
