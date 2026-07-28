@@ -75,7 +75,9 @@
       <div class="me-fields">
         <label class="field-label">ТВОЙ НИК</label>
         <input id="input-name" class="text-input" maxlength="10" placeholder="Игрок" autocomplete="off">
-        <div class="me-note">Фото никуда не отправляется на сервер — только напрямую другим игрокам по P2P.</div>
+        <div class="face-status" id="face-status">Лицо на фото находится автоматически — вырежем голову.</div>
+        <div class="me-note">Фото никуда не отправляется на сервер: распознавание и обрезка идут прямо
+          в браузере, дальше только P2P другим игрокам.</div>
       </div>
     </div>
 
@@ -143,6 +145,7 @@
 
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="js/utils.js"></script>
+<script src="js/face.js"></script>
 <script src="js/net.js"></script>
 <script src="js/fighter.js"></script>
 <script src="js/game.js"></script>
