@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>SMART HOTEL FIGHTING</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>👊</text></svg>">
+</head>
+<body>
+
+<!-- ============ ФОН: неоновая сетка для всех экранов меню ============ -->
+<div id="bg-grid"></div>
+<div id="bg-glow"></div>
+
+<!-- ============ ЭКРАН 1: ГЛАВНОЕ МЕНЮ ============ -->
+<section class="screen active" id="screen-menu">
+  <div class="menu-wrap">
+    <h1 class="logo">
+      <span class="logo-line-1" data-text="SMART HOTEL">SMART HOTEL</span>
+      <span class="logo-line-2" data-text="FIGHTING">FIGHTING</span>
+    </h1>
+    <p class="tagline">2–4 игрока · онлайн · все против всех</p>
+
+    <div class="menu-actions">
+      <button class="btn btn-primary" id="btn-create">СОЗДАТЬ ЛОББИ</button>
+      <div class="join-row">
+        <input id="input-code" class="code-input" maxlength="6" placeholder="КОД" autocomplete="off" spellcheck="false">
+        <button class="btn" id="btn-join">ПОДКЛЮЧИТЬСЯ</button>
+      </div>
+    </div>
+
+    <div class="menu-hint" id="menu-status">Хост создаёт комнату и передаёт код друзьям.</div>
+
+    <div class="controls-card">
+      <div class="controls-title">УПРАВЛЕНИЕ</div>
+      <div class="controls-grid">
+        <div><kbd>A</kbd><kbd>D</kbd> / <kbd>←</kbd><kbd>→</kbd><span>движение</span></div>
+        <div><kbd>W</kbd> / <kbd>Space</kbd><span>прыжок</span></div>
+        <div><kbd>J</kbd><span>удар рукой</span></div>
+        <div><kbd>K</kbd><span>удар ногой</span></div>
+        <div><kbd>L</kbd> / <kbd>Shift</kbd><span>блок</span></div>
+        <div><kbd>S</kbd> / <kbd>↓</kbd><span>спуск с платформы</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ ЭКРАН 2: ЛОББИ ============ -->
+<section class="screen" id="screen-lobby">
+  <div class="lobby-wrap">
+
+    <header class="lobby-head">
+      <div class="room-block">
+        <div class="room-label">КОД КОМНАТЫ</div>
+        <div class="room-code" id="room-code">------</div>
+        <button class="btn btn-ghost btn-sm" id="btn-copy">СКОПИРОВАТЬ</button>
+      </div>
+      <div class="lobby-title">
+        <span class="lobby-title-main">ЛОББИ</span>
+        <span class="lobby-title-sub" id="lobby-sub">ожидание игроков…</span>
+      </div>
+    </header>
+
+    <!-- Карточка своего бойца: имя + фото лица -->
+    <div class="me-card">
+      <label class="avatar-drop" id="avatar-drop">
+        <input type="file" id="avatar-input" accept="image/*" hidden>
+        <canvas id="avatar-preview" width="180" height="180"></canvas>
+        <div class="avatar-hint">ФОТО ЛИЦА<br><small>клик или перетащи</small></div>
+      </label>
+      <div class="me-fields">
+        <label class="field-label">ТВОЙ НИК</label>
+        <input id="input-name" class="text-input" maxlength="10" placeholder="Игрок" autocomplete="off">
+        <div class="me-note">Фото никуда не отправляется на сервер — только напрямую другим игрокам по P2P.</div>
+      </div>
+    </div>
+
+    <!-- Список подключившихся -->
+    <div class="players-strip" id="players-strip"></div>
+
+    <!-- Настройки боя (только хост) -->
+    <div class="host-panel" id="host-panel">
+      <label class="arena-drop" id="arena-drop">
+        <input type="file" id="arena-input" accept="image/*" hidden>
+        <canvas id="arena-preview" width="320" height="180"></canvas>
+        <div class="arena-hint">ФОН АРЕНЫ<br><small>клик или перетащи фото</small></div>
+      </label>
+      <div class="host-controls">
+        <div class="mode-row">
+          <span class="field-label">ИГРА ДО</span>
+          <div class="seg" id="seg-kills">
+            <button data-v="5">5</button>
+            <button data-v="10" class="on">10</button>
+            <button data-v="20">20</button>
+            <button data-v="0">∞</button>
+          </div>
+          <span class="seg-caption">киллов</span>
+        </div>
+        <button class="btn btn-primary btn-big" id="btn-start" disabled>НАЧАТЬ БОЙ</button>
+        <div class="host-note" id="host-note">Нужно минимум 2 игрока.</div>
+      </div>
+    </div>
+
+    <div class="client-wait" id="client-wait">Ждём, пока хост начнёт бой…</div>
+
+    <button class="btn btn-ghost btn-sm lobby-leave" id="btn-leave">ВЫЙТИ</button>
+  </div>
+</section>
+
+<!-- ============ ЭКРАН 3: БОЙ ============ -->
+<section class="screen" id="screen-game">
+  <canvas id="canvas"></canvas>
+
+  <!-- Табло очков -->
+  <div class="hud-score" id="hud-score"></div>
+
+  <!-- Оверлей смерти / респавна -->
+  <div class="death-overlay" id="death-overlay">
+    <div class="death-title">НОКАУТ</div>
+    <div class="death-timer" id="death-timer">10</div>
+    <div class="death-sub">возрождение…</div>
+  </div>
+
+  <!-- Экран победы -->
+  <div class="win-overlay" id="win-overlay">
+    <div class="win-inner">
+      <div class="win-title">ПОБЕДА</div>
+      <div class="win-name" id="win-name">—</div>
+      <div class="win-list" id="win-list"></div>
+      <button class="btn btn-primary" id="btn-again">В ЛОББИ</button>
+    </div>
+  </div>
+
+  <div class="net-badge" id="net-badge"></div>
+</section>
+
+<!-- Тост-уведомления -->
+<div id="toast"></div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/net.js"></script>
+<script src="js/fighter.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>
