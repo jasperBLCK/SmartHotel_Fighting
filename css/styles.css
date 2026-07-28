@@ -271,6 +271,49 @@ kbd{
 .face-status.warn{ color:var(--amber) }
 .face-status.busy{ color:var(--cyan); animation:pulse 1.2s ease-in-out infinite }
 
+.controls-note{
+  margin-top:14px; padding-top:12px; border-top:1px solid var(--line);
+  font-size:11px; color:var(--muted); line-height:1.6;
+}
+
+/* --- выбор персонажа --- */
+.char-block{
+  border:1px solid var(--line); border-radius:var(--r);
+  background:var(--panel); backdrop-filter:blur(14px);
+  padding:18px 22px;
+}
+.block-title{
+  font-family:'Bebas Neue',sans-serif; letter-spacing:.3em;
+  color:var(--muted); font-size:13px; margin-bottom:14px;
+}
+.char-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px }
+.char-card{
+  position:relative; text-align:left; cursor:pointer;
+  border:1px solid var(--line); border-radius:11px;
+  background:rgba(0,0,0,.32);
+  padding:12px 13px; transition:.16s;
+  color:var(--text); font-family:'JetBrains Mono',monospace;
+}
+.char-card:hover{ border-color:rgba(255,255,255,.34); transform:translateY(-2px) }
+.char-card.on{
+  border-color:var(--pink); background:rgba(255,45,111,.12);
+  box-shadow:0 0 26px -10px var(--pink);
+}
+.char-card .cname{
+  font-family:'Bebas Neue',sans-serif; font-size:21px; letter-spacing:.09em;
+  display:flex; align-items:center; gap:8px; margin-bottom:5px;
+}
+.char-card .cdot{ width:9px; height:9px; border-radius:50%; background:var(--pink) }
+.char-card .cinfo{ font-size:10px; color:var(--muted); line-height:1.45; min-height:28px }
+.char-card .cstats{ display:flex; gap:4px; margin-top:9px }
+.char-card .cstat{ flex:1 }
+.char-card .cstat i{
+  display:block; font-style:normal; font-size:8px;
+  letter-spacing:.14em; color:var(--muted); margin-bottom:3px;
+}
+.char-card .cbar{ height:4px; border-radius:2px; background:rgba(255,255,255,.10); overflow:hidden }
+.char-card .cbar span{ display:block; height:100%; border-radius:2px; background:var(--cyan) }
+
 /* --- список игроков --- */
 .players-strip{
   display:grid; grid-template-columns:repeat(4,1fr); gap:14px;
@@ -293,6 +336,9 @@ kbd{
 .pslot .pname{
   font-family:'Bebas Neue',sans-serif; font-size:21px; letter-spacing:.08em;
   max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.pslot .pchar{
+  font-size:9px; letter-spacing:.16em; color:var(--muted);
 }
 .pslot .ptag{
   font-size:9px; letter-spacing:.2em; color:var(--slot-color);

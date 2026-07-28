@@ -164,6 +164,14 @@ const U = (() => {
       kick:   () => { noise({ t: .16, vol: .28, hp: 260 }); tone({ f: 120, f2: 40, t: .18, vol: .22, type: 'sawtooth' }); },
       block:  () => { tone({ f: 900, f2: 1400, t: .07, vol: .13, type: 'triangle' }); noise({ t: .05, vol: .08, hp: 3000 }); },
       death:  () => { tone({ f: 320, f2: 45, t: .55, vol: .22, type: 'sawtooth' }); noise({ t: .4, vol: .16, hp: 200 }); },
+      // пролом блока — резкий «хруст» с металлическим призвуком
+      guardBreak: () => {
+        noise({ t: .22, vol: .3, hp: 400 });
+        tone({ f: 220, f2: 90, t: .25, vol: .2, type: 'square' });
+        tone({ f: 1400, f2: 700, t: .18, vol: .12, type: 'triangle', delay: .03 });
+      },
+      // тяжёлый вдох на отдышке
+      winded: () => { noise({ t: .3, vol: .12, hp: 900 }); noise({ t: .25, vol: .09, hp: 1400, delay: .3 }); },
       spawn:  () => { tone({ f: 420, f2: 880, t: .16, vol: .14, type: 'triangle' }); tone({ f: 660, f2: 1320, t: .16, vol: .10, type: 'triangle', delay: .07 }); },
       jump:   () => tone({ f: 340, f2: 620, t: .07, vol: .07, type: 'triangle' }),
       ui:     () => tone({ f: 620, f2: 780, t: .05, vol: .08, type: 'triangle' }),
