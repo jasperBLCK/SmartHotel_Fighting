@@ -23,7 +23,7 @@
       <span class="logo-line-1" data-text="SMART HOTEL">SMART HOTEL</span>
       <span class="logo-line-2" data-text="FIGHTING">FIGHTING</span>
     </h1>
-    <p class="tagline">2–4 игрока · онлайн · все против всех</p>
+    <p class="tagline">2–4 игрока · через интернет · все против всех</p>
 
     <div class="menu-actions">
       <button class="btn btn-primary" id="btn-create">СОЗДАТЬ ЛОББИ</button>
@@ -33,26 +33,27 @@
       </div>
     </div>
 
-    <div class="menu-hint" id="menu-status">Хост создаёт комнату и передаёт код друзьям.</div>
+    <div class="menu-hint" id="menu-status">Хост создаёт комнату и передаёт код друзьям — играть можно из разных сетей и городов.</div>
 
     <div class="controls-card">
       <div class="controls-title">УПРАВЛЕНИЕ</div>
       <div class="controls-grid">
         <div><kbd>A</kbd><kbd>D</kbd> / <kbd>←</kbd><kbd>→</kbd><span>движение</span></div>
         <div><kbd>W</kbd> / <kbd>Space</kbd><span>прыжок (двойной)</span></div>
-        <div><kbd>L</kbd> / <kbd>Shift</kbd><span>блок (ломается!)</span></div>
-        <div><kbd>J</kbd><span>джеб</span></div>
-        <div><kbd>→</kbd>+<kbd>J</kbd><span>хук</span></div>
-        <div><kbd>S</kbd>+<kbd>J</kbd><span>апперкот</span></div>
-        <div><kbd>K</kbd><span>хай-кик</span></div>
-        <div><kbd>→</kbd>+<kbd>K</kbd><span>лоу-кик</span></div>
-        <div><kbd>S</kbd>+<kbd>K</kbd><span>подсечка</span></div>
-        <div>в прыжке <kbd>J</kbd><span>удар с воздуха</span></div>
-        <div>в прыжке <kbd>K</kbd><span>дайв-кик</span></div>
         <div><kbd>S</kbd> / <kbd>↓</kbd><span>спуск с платформы</span></div>
+        <div><kbd>Shift</kbd> / <kbd>P</kbd><span>блок (ломается!)</span></div>
+        <div><kbd>U</kbd><span>джеб</span></div>
+        <div><kbd>I</kbd><span>хук</span></div>
+        <div><kbd>O</kbd><span>апперкот</span></div>
+        <div><kbd>J</kbd><span>хай-кик</span></div>
+        <div><kbd>K</kbd><span>лоу-кик</span></div>
+        <div><kbd>L</kbd><span>подсечка</span></div>
+        <div><kbd>1</kbd>…<kbd>5</kbd><span>подколки</span></div>
+        <div>в прыжке<span>рука → удар с воздуха, нога → дайв-кик</span></div>
       </div>
-      <div class="controls-note">Удары тратят выносливость. Кончилась — отдышка,
-        боец медленный и бить не может. Блок держит не бесконечно: пробьют — оглушение.</div>
+      <div class="controls-note">Удары и прыжки жрут выносливость, а пропущенные
+        удары выбивают дыхание. Выдохся — бить нечем, ноги ватные. Блок держит
+        не бесконечно: пробьют — оглушение и открытая голова.</div>
     </div>
   </div>
 </section>
@@ -150,6 +151,9 @@
       <button class="btn btn-primary" id="btn-again">В ЛОББИ</button>
     </div>
   </div>
+
+  <!-- Панель подколок (клавиши 1..5, можно и мышкой) -->
+  <div class="taunt-bar" id="taunt-bar"></div>
 
   <div class="net-badge" id="net-badge"></div>
 </section>

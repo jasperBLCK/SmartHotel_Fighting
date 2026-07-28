@@ -53,6 +53,21 @@ const UI = (() => {
     $('#input-name').value = me.name;
     drawAvatarPreview(null);
     renderChars();
+    renderTaunts();
+  }
+
+  /* Панель подколок на экране боя: показывает клавиши 1..5 и работает мышкой. */
+  function renderTaunts() {
+    const bar = $('#taunt-bar');
+    bar.innerHTML = '';
+    TAUNTS.forEach((t, i) => {
+      const el = document.createElement('button');
+      el.className = 'taunt-btn';
+      el.innerHTML = `<span class="tk">${i + 1}</span><span class="te">${t.e}</span>`;
+      el.title = t.t;
+      el.addEventListener('click', () => Game.taunt(i));
+      bar.appendChild(el);
+    });
   }
 
   /* Карточки выбора персонажа. */
@@ -338,6 +353,9 @@ const UI = (() => {
     /* --- ХОСТ: инпут клиента --- */
     Net.on('in', (from, msg) => Game.onHostInput(from, msg));
 
+    /* --- ХОСТ: клиент кого-то подколол --- */
+    Net.on('tt', (from, msg) => Game.onTaunt(from, msg));
+
     /* --- ХОСТ: клиент отвалился --- */
     Net.on('leave', (pid) => {
       if (!isHost) return;
@@ -400,7 +418,7 @@ const UI = (() => {
     arenaData = null;
     hudSig = '';
     $('#arena-drop').classList.remove('has-photo');
-    $('#menu-status').textContent = 'Хост создаёт комнату и передаёт код друзьям.';
+    $('#menu-status').textContent = 'Хост создаёт комнату и передаёт код друзьям — играть можно из разных сетей и городов.';
     $('#menu-status').classList.remove('err');
     showScreen('menu');
   }

@@ -29,7 +29,14 @@ const Net = (() => {
   function on(type, fn) { (handlers[type] || (handlers[type] = [])).push(fn); }
   function emit(type, ...args) { (handlers[type] || []).forEach(f => f(...args)); }
 
-  /* Конфиг PeerJS: публичный брокер + STUN-серверы Google. */
+  /*
+    Конфиг PeerJS: публичный брокер + STUN и TURN.
+
+    STUN хватает, когда хотя бы одна сторона за обычным NAT — это большинство
+    домашних роутеров. Но мобильный интернет и строгие NAT так не пробиваются,
+    поэтому добавлены бесплатные публичные TURN-серверы (трафик идёт через них).
+    Хочешь стабильности — заведи свой TURN (coturn / metered.ca) и подставь сюда.
+  */
   function peerOpts() {
     return {
       debug: 1,
@@ -37,7 +44,17 @@ const Net = (() => {
         iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:global.stun.twilio.com:3478' },
+          { urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject', credential: 'openrelayproject' },
+          { urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject', credential: 'openrelayproject' },
+          { urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject', credential: 'openrelayproject' },
+          { urls: 'turn:staticauth.openrelay.metered.ca:80',
+            username: 'openrelayproject', credential: 'openrelayproject' },
         ],
+        iceCandidatePoolSize: 4,
       },
     };
   }

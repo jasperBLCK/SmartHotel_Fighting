@@ -24,8 +24,19 @@ const ARENA = {
   ],
 };
 
-/* ---------------- Биты клавиш ---------------- */
-const K = { LEFT: 1, RIGHT: 2, UP: 4, DOWN: 8, PUNCH: 16, KICK: 32, BLOCK: 64 };
+/* ---------------- Биты клавиш ----------------
+   У каждого удара своя клавиша — никаких комбинаций. */
+const K = {
+  LEFT: 1, RIGHT: 2, UP: 4, DOWN: 8, BLOCK: 16,
+  JAB: 32, HOOK: 64, UPPER: 128,        // руки
+  HIGH: 256, LOW: 512, SWEEP: 1024,     // ноги
+};
+
+/* Клавиша -> удар. В воздухе руки дают удар с прыжка, ноги — дайв-кик. */
+const ATTACK_BITS = [
+  [K.JAB, 'jab'], [K.HOOK, 'hook'], [K.UPPER, 'uppercut'],
+  [K.HIGH, 'highkick'], [K.LOW, 'midkick'], [K.SWEEP, 'sweep'],
+];
 
 /* ---------------- Константы физики (кадр = 1/60 c) ---------------- */
 const PHYS = {
@@ -33,26 +44,30 @@ const PHYS = {
   FRICTION: 0.80, AIR_FRICTION: 0.94,
   GRAV: 0.90, MAX_FALL: 26, JUMP: -19.0, JUMP2: -16.0,
   BLOCK_SPD: 0.30,
-  BLOCK_DMG: 0.18,        // сколько урона проходит сквозь блок
+  BLOCK_DMG: 0.22,        // сколько урона проходит сквозь блок
   BLOCK_KB: 0.45,
   W: 74, H: 134,
   MAX_HP: 100,
   RESPAWN_MS: 10000,
   INVULN_MS: 1600,
 
-  GUARD_MAX: 62,          // прочность блока
-  GUARD_REGEN: 0.42,      // восстановление за кадр вне блока
-  GUARD_REGEN_HOLD: 0.10, // восстановление, пока блок держат
-  BREAK_FRAMES: 52,       // стан после пролома блока
+  GUARD_MAX: 52,          // прочность блока
+  GUARD_REGEN: 0.30,      // восстановление за кадр вне блока
+  GUARD_REGEN_HOLD: 0.06, // восстановление, пока блок держат
+  BREAK_FRAMES: 64,       // стан после пролома блока
 
+  /* Выносливость — жёсткая: восстанавливается медленно, тратится быстро.
+     Спам ударов наказывается отдышкой почти сразу. */
   STAM_MAX: 100,
-  STAM_REGEN: 0.62,       // покой
-  STAM_REGEN_MOVE: 0.34,  // в движении
-  STAM_REGEN_BLOCK: 0.16, // в блоке
-  STAM_JUMP: 5,
-  WINDED_AT: 14,          // ниже этого порога боец «выдохся»
-  WINDED_UNTIL: 42,       // отдышка держится, пока не восстановим столько
-  WINDED_SPD: 0.70,       // множитель скорости на отдышке
+  STAM_REGEN: 0.40,       // покой
+  STAM_REGEN_MOVE: 0.21,  // в движении
+  STAM_REGEN_BLOCK: 0.07, // в блоке
+  STAM_JUMP: 9,
+  STAM_ON_HIT: 0.45,      // сколько выносливости выбивает каждая единица урона
+  STAM_TAUNT: 6,          // подколка тоже стоит дыхания
+  WINDED_AT: 20,          // ниже этого порога боец «выдохся»
+  WINDED_UNTIL: 55,       // отдышка держится, пока не восстановим столько
+  WINDED_SPD: 0.60,       // множитель скорости на отдышке
 };
 
 /* ---------------- Пропорции тела ---------------- */
@@ -71,14 +86,14 @@ const BODY = {
    guard   — сколько снимает с чужого блока,
    ox/oy   — угол хитбокса относительно центра бойца (ноги = y). */
 const ATTACKS = {
-  jab:      { kind: 'punch', startup: 3, active: 4, recovery: 7,  dmg: 6,  reach: 62, ox: 14, oy: -104, hh: 40, kbx: 6,  kby: -1.5, stun: 8,  stam: 7,  guard: 8,  label: 'джеб' },
-  hook:     { kind: 'punch', startup: 7, active: 5, recovery: 14, dmg: 12, reach: 68, ox: 14, oy: -100, hh: 46, kbx: 11, kby: -3,   stun: 14, stam: 14, guard: 17, label: 'хук' },
-  uppercut: { kind: 'punch', startup: 8, active: 5, recovery: 19, dmg: 15, reach: 54, ox: 10, oy: -88,  hh: 66, kbx: 5,  kby: -13,  stun: 20, stam: 20, guard: 24, label: 'апперкот' },
-  airpunch: { kind: 'punch', startup: 4, active: 6, recovery: 10, dmg: 10, reach: 64, ox: 12, oy: -96,  hh: 48, kbx: 9,  kby: 1,    stun: 12, stam: 12, guard: 14, air: true, label: 'удар в прыжке' },
-  highkick: { kind: 'kick',  startup: 9, active: 6, recovery: 18, dmg: 14, reach: 86, ox: 10, oy: -104, hh: 46, kbx: 13, kby: -6,   stun: 16, stam: 16, guard: 20, label: 'хай-кик' },
-  midkick:  { kind: 'kick',  startup: 7, active: 5, recovery: 14, dmg: 11, reach: 84, ox: 10, oy: -62,  hh: 44, kbx: 12, kby: -4,   stun: 14, stam: 13, guard: 17, label: 'лоу-кик' },
-  sweep:    { kind: 'kick',  startup: 6, active: 5, recovery: 16, dmg: 8,  reach: 82, ox: 8,  oy: -22,  hh: 32, kbx: 7,  kby: -2,   stun: 24, stam: 12, guard: 14, trip: true, label: 'подсечка' },
-  divekick: { kind: 'kick',  startup: 4, active: 11, recovery: 12, dmg: 13, reach: 68, ox: 8, oy: -56,  hh: 58, kbx: 10, kby: 2,    stun: 15, stam: 14, guard: 19, air: true, label: 'удар с воздуха' },
+  jab:      { kind: 'punch', startup: 3, active: 4, recovery: 8,  dmg: 8,  reach: 62, ox: 14, oy: -104, hh: 40, kbx: 6,  kby: -1.5, stun: 9,  stam: 10, guard: 9,  label: 'джеб' },
+  hook:     { kind: 'punch', startup: 7, active: 5, recovery: 16, dmg: 15, reach: 68, ox: 14, oy: -100, hh: 46, kbx: 12, kby: -3,   stun: 16, stam: 19, guard: 19, label: 'хук' },
+  uppercut: { kind: 'punch', startup: 8, active: 5, recovery: 22, dmg: 19, reach: 54, ox: 10, oy: -88,  hh: 66, kbx: 5,  kby: -14,  stun: 22, stam: 27, guard: 27, label: 'апперкот' },
+  airpunch: { kind: 'punch', startup: 4, active: 6, recovery: 12, dmg: 13, reach: 64, ox: 12, oy: -96,  hh: 48, kbx: 10, kby: 1,    stun: 13, stam: 17, guard: 16, air: true, label: 'удар в прыжке' },
+  highkick: { kind: 'kick',  startup: 9, active: 6, recovery: 20, dmg: 18, reach: 86, ox: 10, oy: -104, hh: 46, kbx: 14, kby: -6,   stun: 18, stam: 22, guard: 23, label: 'хай-кик' },
+  midkick:  { kind: 'kick',  startup: 7, active: 5, recovery: 16, dmg: 14, reach: 84, ox: 10, oy: -62,  hh: 44, kbx: 13, kby: -4,   stun: 15, stam: 18, guard: 19, label: 'лоу-кик' },
+  sweep:    { kind: 'kick',  startup: 6, active: 5, recovery: 18, dmg: 10, reach: 82, ox: 8,  oy: -22,  hh: 32, kbx: 8,  kby: -2,   stun: 26, stam: 17, guard: 16, trip: true, label: 'подсечка' },
+  divekick: { kind: 'kick',  startup: 4, active: 11, recovery: 14, dmg: 17, reach: 68, ox: 8, oy: -56,  hh: 58, kbx: 11, kby: 2,    stun: 16, stam: 19, guard: 21, air: true, label: 'удар с воздуха' },
 };
 
 /* ---------------- Персонажи ----------------
@@ -117,6 +132,16 @@ const SKIN = [
 ];
 
 const BLOOD = '#b8121b';
+
+/* ---------------- Подколки (клавиши 1..5) ----------------
+   Показываются облачком над головой и слышны всем в бою. */
+const TAUNTS = [
+  { e: '😂', t: 'НУ И ЛОХ' },
+  { e: '🤡', t: 'КЛОУН' },
+  { e: '💤', t: 'СКУЧНО С ТОБОЙ' },
+  { e: '👊', t: 'ИДИ СЮДА' },
+  { e: '🫵', t: 'ТЫ СЛЕДУЮЩИЙ' },
+];
 
 /* Скруглённый прямоугольник (с фолбэком). */
 function rr(c, x, y, w, h, r) {
@@ -213,6 +238,7 @@ class Fighter {
     this.prevState = 'idle';
     this.lastDraw = 0;
     this.breath = 0;
+    this.taunt = null;            // {i, until} — активная подколка
   }
 
   get box() { return { x: this.x - PHYS.W / 2, y: this.y - PHYS.H, w: PHYS.W, h: PHYS.H }; }
@@ -231,22 +257,6 @@ class Fighter {
     this.state = 'idle'; this.atk = null; this.stun = 0;
     this.lastHitBy = null;
     this.rx = spawn.x; this.ry = spawn.y;
-  }
-
-  /* Какой именно удар выбрать по контексту (направление, приседание, воздух). */
-  pickAttack(kind, mask) {
-    const down = !!(mask & K.DOWN);
-    const fwd = (mask & K.RIGHT && this.facing > 0) || (mask & K.LEFT && this.facing < 0);
-    if (kind === 'punch') {
-      if (!this.onGround) return 'airpunch';
-      if (down) return 'uppercut';
-      if (fwd) return 'hook';
-      return 'jab';
-    }
-    if (!this.onGround) return 'divekick';
-    if (down) return 'sweep';
-    if (fwd) return 'midkick';
-    return 'highkick';
   }
 
   /* ---------- Шаг физики (только на хосте) ---------- */
@@ -315,17 +325,22 @@ class Fighter {
     /* --- спуск сквозь платформу --- */
     if ((pressed & K.DOWN) && this.onGround && !this.onFloor) this.dropTimer = 12;
 
-    /* --- старт удара --- */
-    if (!busy && !locked && !this.blocking && (pressed & (K.PUNCH | K.KICK))) {
-      const kind = (pressed & K.PUNCH) ? 'punch' : 'kick';
-      const name = this.pickAttack(kind, mask);
-      const a = this.moves[name];
-      if (this.stam >= a.stam) {
-        this.stam -= a.stam;
-        this.atk = { type: name, frame: 0, hit: new Set() };
-        if (name === 'divekick') { this.vy = 9; this.vx = this.facing * 8; }
-      } else {
-        this.fxNoStam = true;                 // «выдохся» — удар не проходит
+    /* --- старт удара: у каждого удара своя клавиша --- */
+    if (!busy && !locked && !this.blocking) {
+      for (const [bit, base] of ATTACK_BITS) {
+        if (!(pressed & bit)) continue;
+        // в воздухе любая рука — удар с прыжка, любая нога — дайв-кик
+        const name = this.onGround ? base
+                   : (ATTACKS[base].kind === 'punch' ? 'airpunch' : 'divekick');
+        const a = this.moves[name];
+        if (this.stam >= a.stam) {
+          this.stam -= a.stam;
+          this.atk = { type: name, frame: 0, hit: new Set() };
+          if (name === 'divekick') { this.vy = 9; this.vx = this.facing * 8; }
+        } else {
+          this.fxNoStam = true;               // «выдохся» — удар не проходит
+        }
+        break;
       }
     }
 
@@ -413,6 +428,8 @@ class Fighter {
     const kb = (blocked && !broke) ? PHYS.BLOCK_KB : 1;
 
     this.hp = Math.max(0, this.hp - dmg);
+    // пропущенный удар выбивает дыхание — держать блок тоже тяжело
+    this.stam = Math.max(0, this.stam - dmg * PHYS.STAM_ON_HIT * (blocked && !broke ? 1.6 : 1));
     this.vx += dir * hb.kbx * kb;
     this.vy += hb.kby * kb;
     if (!blocked || broke) {
@@ -695,6 +712,47 @@ class Fighter {
 
     c.restore();
     this.drawHUD(c, x, y + BODY.HEAD_Y - BODY.HEAD_R - 32);
+    if (this.taunt && now < this.taunt.until) this.drawTaunt(c, p, now);
+  }
+
+  /* Облачко с подколкой над головой. */
+  drawTaunt(c, p, now) {
+    const tt = TAUNTS[this.taunt.i] || TAUNTS[0];
+    const left = this.taunt.until - now;
+    const age = 1 - U.clamp(left / 2200, 0, 1);
+    const pop = age < .12 ? age / .12 : 1;                 // выскакивает
+    const fade = left < 300 ? left / 300 : 1;
+
+    c.save();
+    c.globalAlpha = fade;
+    const bx = p.headX + p.f * 26;
+    const by = p.headY - BODY.HEAD_R - 62 - Math.sin(now / 260) * 3;
+
+    c.font = '700 17px "Bebas Neue", sans-serif';
+    const tw = c.measureText(tt.t).width;
+    const w = tw + 54, h = 34;
+    c.translate(bx, by);
+    c.scale(pop, pop);
+    c.translate(-w / 2, -h / 2);
+
+    // пузырь
+    c.fillStyle = 'rgba(10,10,16,.90)';
+    c.strokeStyle = this.color; c.lineWidth = 2;
+    rr(c, 0, 0, w, h, 10); c.fill(); c.stroke();
+    // хвостик к голове
+    c.beginPath();
+    c.moveTo(w / 2 - p.f * 8, h - 1);
+    c.lineTo(w / 2 - p.f * 20, h + 12);
+    c.lineTo(w / 2 + p.f * 2, h - 1);
+    c.closePath(); c.fill();
+
+    c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.font = '22px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif';
+    c.fillText(tt.e, 9, h / 2);
+    c.font = '700 17px "Bebas Neue", sans-serif';
+    c.fillStyle = '#fff';
+    c.fillText(tt.t, 40, h / 2 + 1);
+    c.restore();
   }
 
   /* ---- одежда: цвета ---- */
