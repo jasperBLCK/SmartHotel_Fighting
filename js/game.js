@@ -68,20 +68,26 @@ const Game = (() => {
   }
 
   /* ---------------- Клавиатура ---------------- */
+  /* Раскладка: левая рука — движение, правая — удары.
+     Верхний ряд U I O — руки, нижний J K L — ноги, блок на Shift. */
   const KEYMAP = {
-    'KeyA': K.LEFT, 'ArrowLeft': K.LEFT,
+    'KeyA': K.LEFT,  'ArrowLeft': K.LEFT,
     'KeyD': K.RIGHT, 'ArrowRight': K.RIGHT,
-    'KeyW': K.UP, 'ArrowUp': K.UP, 'Space': K.UP,
-    'KeyS': K.DOWN, 'ArrowDown': K.DOWN,
-    'KeyJ': K.PUNCH,
-    'KeyK': K.KICK,
-    'KeyL': K.BLOCK, 'ShiftLeft': K.BLOCK, 'ShiftRight': K.BLOCK,
+    'KeyW': K.UP,    'ArrowUp': K.UP, 'Space': K.UP,
+    'KeyS': K.DOWN,  'ArrowDown': K.DOWN,
+    'KeyU': K.JAB,   'KeyI': K.HOOK,  'KeyO': K.UPPER,
+    'KeyJ': K.HIGH,  'KeyK': K.LOW,   'KeyL': K.SWEEP,
+    'ShiftLeft': K.BLOCK, 'ShiftRight': K.BLOCK, 'KeyP': K.BLOCK,
   };
 
   function bindKeys() {
     window.addEventListener('keydown', (e) => {
+      if (!running) return;
+      // подколки на 1..5
+      const m = /^(?:Digit|Numpad)([1-5])$/.exec(e.code);
+      if (m) { e.preventDefault(); if (!e.repeat) doTaunt(+m[1] - 1); return; }
       const bit = KEYMAP[e.code];
-      if (!bit || !running) return;
+      if (!bit) return;
       e.preventDefault();
       if (e.repeat) return;
       localMask |= bit;
@@ -104,6 +110,32 @@ const Game = (() => {
       lastSentMask = localMask;
       Net.toHost({ t: 'in', k: localMask });
     }
+  }
+
+  /* ---------------- Подколки (клавиши 1..5) ---------------- */
+  let lastTauntAt = 0;
+  const tauntCooldown = new Map();      // pid -> время следующей разрешённой подколки
+
+  /* Нажали 1..5: хост применяет сразу, клиент просит хоста. */
+  function doTaunt(i) {
+    if (over) return;
+    const now = performance.now();
+    if (now - lastTauntAt < 1200) return;          // локальный антиспам
+    lastTauntAt = now;
+    if (isHost) applyTaunt(myPid, i);
+    else Net.toHost({ t: 'tt', i });
+  }
+
+  /* Авторитетно у хоста: подколка стоит выносливости и имеет откат. */
+  function applyTaunt(pid, i) {
+    if (!isHost || over) return;
+    const f = fighters.get(pid);
+    if (!f || f.dead) return;
+    const now = performance.now();
+    if ((tauntCooldown.get(pid) || 0) > now) return;
+    tauntCooldown.set(pid, now + 1200);
+    f.stam = Math.max(0, f.stam - PHYS.STAM_TAUNT);
+    addFx({ k: 'taunt', pid, i: U.clamp(i | 0, 0, TAUNTS.length - 1) });
   }
 
   /* =================================================================
@@ -482,6 +514,14 @@ const Game = (() => {
       }
       U.sfx.spawn();
     }
+    else if (k === 'taunt') {
+      const f = fighters.get(fx.pid);
+      if (f) {
+        f.taunt = { i: fx.i, until: performance.now() + 2200 };
+        U.sfx.taunt(fx.i);
+      }
+      return;
+    }
     else if (k === 'jump') {
       for (let i = 0; i < 7; i++) {
         particles.push({ x: x + U.rand(-16, 16), y, vx: U.rand(-2.5, 2.5), vy: U.rand(-1, -3),
@@ -809,14 +849,16 @@ const Game = (() => {
     if (!isHost) return;
     inputs.set(from, msg.k | 0);
   }
+  function onTaunt(from, msg) { applyTaunt(from, msg.i); }
+
   function onOver(msg) {
     over = msg.o;
     showOver();
   }
 
   return {
-    init, start, stop, resize, removePlayer,
-    onSnapshot, onHostInput, onOver,
+    init, start, stop, resize, removePlayer, taunt: doTaunt,
+    onSnapshot, onHostInput, onOver, onTaunt,
     get running() { return running; },
     get isOver() { return !!over; },
     scoreTable,

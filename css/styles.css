@@ -471,6 +471,26 @@ kbd{
 .win-row .wn{ flex:1; text-align:left; font-size:14px }
 .win-row .wk{ font-family:'Bebas Neue',sans-serif; font-size:22px; color:var(--amber) }
 
+/* панель подколок */
+.taunt-bar{
+  position:absolute; right:12px; bottom:12px; z-index:5;
+  display:flex; gap:6px;
+}
+.taunt-btn{
+  display:flex; flex-direction:column; align-items:center; gap:2px;
+  width:46px; padding:6px 0 5px;
+  background:rgba(8,8,16,.74); backdrop-filter:blur(8px);
+  border:1px solid var(--line); border-radius:10px;
+  cursor:pointer; transition:.14s;
+}
+.taunt-btn:hover{ border-color:var(--amber); transform:translateY(-3px) }
+.taunt-btn:active{ transform:translateY(0) scale(.94) }
+.taunt-btn .tk{
+  font-family:'JetBrains Mono',monospace; font-size:9px;
+  color:var(--muted); letter-spacing:.1em;
+}
+.taunt-btn .te{ font-size:20px; line-height:1 }
+
 /* индикатор сети */
 .net-badge{
   position:absolute; left:12px; bottom:12px; z-index:5;

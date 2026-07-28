@@ -175,6 +175,12 @@ const U = (() => {
       spawn:  () => { tone({ f: 420, f2: 880, t: .16, vol: .14, type: 'triangle' }); tone({ f: 660, f2: 1320, t: .16, vol: .10, type: 'triangle', delay: .07 }); },
       jump:   () => tone({ f: 340, f2: 620, t: .07, vol: .07, type: 'triangle' }),
       ui:     () => tone({ f: 620, f2: 780, t: .05, vol: .08, type: 'triangle' }),
+      // подколка: дразнящая «ду-ду-дуу», у каждой кнопки свой мотив
+      taunt:  (i = 0) => {
+        const seq = [[660, 560, 440], [880, 700, 880], [330, 300, 260],
+                     [520, 660, 780], [740, 620, 900]][i % 5];
+        seq.forEach((f, n) => tone({ f, t: .13, vol: .13, type: 'square', delay: n * .11 }));
+      },
       join:   () => { tone({ f: 520, t: .08, vol: .10, type: 'triangle' }); tone({ f: 780, t: .10, vol: .10, type: 'triangle', delay: .08 }); },
       win:    () => [0, .12, .24, .42].forEach((d, i) => tone({ f: [523, 659, 784, 1046][i], t: .3, vol: .16, type: 'triangle', delay: d })),
       bell:   () => { tone({ f: 880, t: .5, vol: .2, type: 'triangle' }); tone({ f: 1320, t: .5, vol: .12, type: 'triangle', delay: .01 }); },
