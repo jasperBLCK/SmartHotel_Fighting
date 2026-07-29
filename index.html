@@ -2,8 +2,19 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>SMART HOTEL FIGHTING</title>
+
+<!-- Ярлык на домашнем экране: игра запускается без панелей браузера, во
+     весь экран. На iPhone это включают именно apple-* мета-теги, манифест
+     там ни на что не влияет; на Android работает манифест. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#06060c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SHF">
+<link rel="apple-touch-icon" href="assets/icons/icon-180.png">
 <!-- Шрифты лежат в репозитории, а не на Google Fonts: у части провайдеров
      он недоступен без VPN, а страница должна открываться у всех одинаково. -->
 <link rel="stylesheet" href="css/fonts.css">
@@ -41,6 +52,12 @@
       <div class="net-check-out" id="netcheck-out"></div>
     </div>
 
+    <!-- Показывается только в Safari на iPhone, пока игра не поставлена ярлыком -->
+    <div class="pwa-hint" id="pwa-hint">
+      Чтобы играть как в обычное приложение — на весь экран, без панелей Safari:
+      <b>Поделиться</b> → <b>На экран «Домой»</b>.
+    </div>
+
     <div class="controls-card">
       <div class="controls-title">УПРАВЛЕНИЕ</div>
       <div class="controls-grid">
@@ -57,6 +74,9 @@
         <div><kbd>1</kbd>…<kbd>5</kbd><span>подколки</span></div>
         <div>в прыжке<span>рука → удар с воздуха, нога → дайв-кик</span></div>
       </div>
+      <div class="controls-note touch-only">На телефоне управление экранное:
+        слева крестовина и блок, справа шесть ударов — верхний ряд руки,
+        нижний ноги. Бить и двигаться можно одновременно, двумя пальцами.</div>
       <div class="controls-note">Удары и прыжки жрут выносливость, а пропущенные
         удары выбивают дыхание. Выдохся — бить нечем, ноги ватные. Блок держит
         не бесконечно: пробьют — оглушение и открытая голова.</div>
@@ -162,7 +182,17 @@
   <div class="taunt-bar" id="taunt-bar"></div>
 
   <div class="net-badge" id="net-badge"></div>
+
+  <!-- Экранные кнопки на телефоне пристраивает touch.js -->
 </section>
+
+<!-- Бой идёт в альбомной ориентации: в портретной от арены остаётся полоска -->
+<div class="rotate-hint" id="rotate-hint">
+  <div class="rh-icon">📱</div>
+  <div class="rh-title">ПОВЕРНИ ТЕЛЕФОН</div>
+  <div class="rh-sub">Бой идёт в альбомной ориентации — так видно всю арену
+    и кнопки ложатся под большие пальцы.</div>
+</div>
 
 <!-- Тост-уведомления -->
 <div id="toast"></div>
@@ -173,6 +203,7 @@
 <script src="js/net.js"></script>
 <script src="js/fighter.js"></script>
 <script src="js/game.js"></script>
+<script src="js/touch.js"></script>
 <script src="js/ui.js"></script>
 </body>
 </html>
