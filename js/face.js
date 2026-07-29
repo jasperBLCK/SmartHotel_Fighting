@@ -12,8 +12,9 @@
         шею и плечи, слегка размываем край и кладём в альфа-канал.
      4. Результат — PNG с прозрачностью: в игре рисуется реальная форма головы.
 
-   Обе модели лежат в репозитории (assets/models), wasm-рантайм грузится
-   с CDN. Никакого бэкенда: всё считается в браузере, фото никуда не уходит.
+   Модели (assets/models) и wasm-рантайм MediaPipe (js/vendor/mediapipe)
+   лежат в репозитории — внешних запросов нет вообще. Никакого бэкенда:
+   всё считается в браузере, фото никуда не уходит.
 
    Если что-то из этого недоступно — работает следующий уровень деградации,
    вплоть до простого овала по центру кадра. Игра не ломается никогда.
@@ -21,9 +22,9 @@
 
 const Face = (() => {
 
-  const MP_VERSION = '0.10.18';
-  const MP_BUNDLE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/vision_bundle.mjs`;
-  const MP_WASM   = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`;
+  // @mediapipe/tasks-vision 0.10.18, скопировано из npm-пакета как есть
+  const MP_BUNDLE = new URL('js/vendor/mediapipe/vision_bundle.mjs', location.href).href;
+  const MP_WASM   = new URL('js/vendor/mediapipe/wasm', location.href).href;
   const MODEL_FACE = 'assets/models/blaze_face_short_range.tflite';
   const MODEL_SEG  = 'assets/models/selfie_segmenter.tflite';
 

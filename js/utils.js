@@ -159,6 +159,9 @@ const U = (() => {
       unlock: () => ctx(),
       toggle: () => (muted = !muted, muted),
       isMuted: () => muted,
+      // свернули вкладку/потеряли фокус — звук замолкает сразу (требование площадок)
+      suspend: () => { try { ac && ac.suspend(); } catch (e) { } },
+      resume:  () => { try { ac && ac.resume(); } catch (e) { } },
       swing:  () => noise({ t: .07, vol: .06, hp: 1800 }),                     // промах
       punch:  () => { noise({ t: .10, vol: .22, hp: 500 }); tone({ f: 190, f2: 60, t: .10, vol: .16 }); },
       kick:   () => { noise({ t: .16, vol: .28, hp: 260 }); tone({ f: 120, f2: 40, t: .18, vol: .22, type: 'sawtooth' }); },
