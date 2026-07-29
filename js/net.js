@@ -98,6 +98,57 @@ const Net = (() => {
                          : ' Нужен свой TURN-сервер, см. js/net-config.js.');
   }
 
+  /* ---------------- Подбор релеев ----------------
+     Фиксированный список рано или поздно протухает: у одного провайдера
+     режут одно, у другого другое, человек переезжает на другой Wi-Fi — и
+     игра «внезапно» перестаёт находить комнаты. Поэтому список не задан,
+     а подбирается: пробуем кандидатов из пула и берём те, что работают
+     из этой сети прямо сейчас.
+
+     Ключевая деталь — идём по пулу строго сверху вниз и берём первые
+     сработавшие. Порядок пула одинаков у всех, поэтому у двух игроков из
+     разных сетей наборы получаются пересекающимися: каждый берёт начало
+     одного и того же списка, просто пропуская недоступное ему. Если бы
+     каждый выбирал «самые быстрые для себя», наборы могли бы не пересечься
+     вовсе — и игроки не увидели бы друг друга при полностью рабочей сети. */
+
+  const RELAY_TTL = 10 * 60 * 1000;   // как долго верим прошлому подбору
+  let relayPick = null;               // { at, urls }
+  let picking = null;                 // идущий подбор, чтобы не запускать дважды
+
+  function forgetRelays() { relayPick = null; }
+
+  async function pickRelays() {
+    if (NetConfig.fixedRelays()) return NetConfig.relays();
+    if (relayPick && Date.now() - relayPick.at < RELAY_TTL) return relayPick.urls;
+    if (picking) return picking;
+
+    picking = (async () => {
+      const pool = NetConfig.relays();
+      const want = NetConfig.want, batch = NetConfig.batch;
+      const good = [];
+      for (let i = 0; i < pool.length && good.length < want; i += batch) {
+        emit('status', 'Подбираем связь… ' + good.length + ' из ' + want);
+        const res = await Promise.all(pool.slice(i, i + batch).map(u => probeRelay(u, 6000)));
+        // порядок ответов совпадает с порядком пула — он и задаёт приоритет
+        res.forEach(r => { if (r.state === 'ok' && good.length < want) good.push(r.url); });
+      }
+      // не нашли ни одного — не сдаёмся молча, пробуем начало пула вслепую
+      const urls = good.length ? good : pool.slice(0, want);
+      relayPick = { at: Date.now(), urls };
+      picking = null;
+      return urls;
+    })();
+
+    return picking;
+  }
+
+  /* Сеть сменилась — прошлый подбор больше ничего не значит. */
+  if (typeof addEventListener === 'function') {
+    addEventListener('online', forgetRelays);
+    try { navigator.connection.addEventListener('change', forgetRelays); } catch (e) { }
+  }
+
   /* ---------------- Общий вход в комнату ---------------- */
   async function open(roomCode, asHost, onReady, onFail) {
     destroy();
@@ -116,11 +167,18 @@ const Net = (() => {
 
     myId = T.selfId;
 
+    let urls;
+    try {
+      urls = await pickRelays();
+    } catch (e) {
+      urls = NetConfig.relays().slice(0, NetConfig.want);
+    }
+
     try {
       room = T.joinRoom(
         {
           appId: APP_ID,
-          relayConfig: { urls: NetConfig.relays() },
+          relayConfig: { urls: urls },
           rtcConfig: { iceServers: NetConfig.iceServers() },
         },
         ROOM_PREFIX + roomCode,
@@ -162,6 +220,7 @@ const Net = (() => {
     try {
       await waitForRelays(RELAY_WAIT);
     } catch (e) {
+      forgetRelays();   // подобранное больше не работает — в следующий раз заново
       const m = 'Не удалось подключиться ни к одному релею. Проверь интернет ' +
                 'и нажми «ПРОВЕРИТЬ СЕТЬ» — станет видно, что именно не проходит.';
       emit('error', m); if (onFail) onFail(m);
@@ -175,6 +234,8 @@ const Net = (() => {
       // клиент ждёт, пока хост его заметит и представится
       hostTimer = setTimeout(() => {
         if (hostId) return;
+        // хоста не видно — возможно, мы разошлись по релеям; пересоберём набор
+        if (!sawPeer) forgetRelays();
         const m = joinFailReason();
         emit('error', m); if (onFail) onFail(m);
         destroy();
@@ -349,7 +410,11 @@ const Net = (() => {
   }
 
   async function diagnose() {
-    const urls = NetConfig.relays();
+    /* Пул большой, и печатать его целиком незачем: игра берёт первые
+       сработавшие сверху списка, поэтому проверяем ровно ту же голову
+       пула, что и подбор. Заодно список остаётся обозримым, чтобы его
+       можно было сверить с другим компьютером. */
+    const urls = NetConfig.relays().slice(0, NetConfig.batch);
     const [relays, ice, skew] = await Promise.all([
       Promise.all(urls.map(u => probeRelay(u))),
       probeIce(),
@@ -359,6 +424,8 @@ const Net = (() => {
       relays,
       relaysOk: relays.filter(r => r.state === 'ok').length,
       relaysTotal: urls.length,
+      relaysWant: NetConfig.want,
+      relaysPool: NetConfig.relays().length,
       ice,
       skew,                       // сек; + значит часы отстают, − спешат
       hasTurn: NetConfig.hasTurn,
@@ -366,8 +433,13 @@ const Net = (() => {
     };
   }
 
+  /* Подбор занимает несколько секунд, поэтому запускаем его заранее, пока
+     игрок читает меню и вводит имя — к моменту «СОЗДАТЬ ЛОББИ» он готов. */
+  function warmup() { pickRelays().catch(() => { }); }
+
   return {
     on, createRoom, joinRoom, toHost, sendTo, broadcast, destroy, diagnose,
+    warmup, forgetRelays,
     get isHost() { return isHost; },
     get myId() { return myId; },
     get code() { return code; },

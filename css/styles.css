@@ -184,6 +184,7 @@ body{
 .net-check-out.on{ display:block }
 .net-check-out b{ color:var(--text); font-weight:400 }
 .net-check-out .ok{ color:var(--cyan) }
+.net-check-out .dim{ opacity:.6 }
 .net-check-out .bad{ color:var(--amber) }
 
 /* ---------- Карточка управления ---------- */
