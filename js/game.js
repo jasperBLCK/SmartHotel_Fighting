@@ -103,6 +103,23 @@ const Game = (() => {
     window.addEventListener('blur', () => { localMask = 0; pushLocalInput(); });
   }
 
+  /* Ввод не с клавиатуры (экранные кнопки на телефоне). Складывается в ту
+     же маску, что и клавиши, поэтому по сети мобильный игрок неотличим от
+     компьютерного — протокол один и тот же. */
+  function setInput(bit, down) {
+    if (!bit) return;
+    if (down) localMask |= bit; else localMask &= ~bit;
+    if (running) pushLocalInput();
+  }
+
+  /* Палец мог уйти с кнопки, экран — погаснуть, приложение — свернуться.
+     Отпускаем всё разом, иначе боец останется бежать в стену. */
+  function releaseAll() {
+    if (!localMask) return;
+    localMask = 0;
+    pushLocalInput();
+  }
+
   /* Клиент отправляет маску хосту; хост просто кладёт себе. */
   function pushLocalInput() {
     if (isHost) { inputs.set(myPid, localMask); return; }
@@ -858,6 +875,7 @@ const Game = (() => {
 
   return {
     init, start, stop, resize, removePlayer, taunt: doTaunt,
+    setInput, releaseAll,
     onSnapshot, onHostInput, onOver, onTaunt,
     get running() { return running; },
     get isOver() { return !!over; },

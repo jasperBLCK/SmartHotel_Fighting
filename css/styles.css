@@ -528,6 +528,130 @@ kbd{
 @keyframes toastIn{ from{opacity:0;transform:translateY(14px)} }
 @keyframes toastOut{ to{opacity:0;transform:translateY(-8px)} }
 
+/* =================== ТЕЛЕФОН ===================
+   Игра ставится ярлыком на домашний экран и запускается без панелей
+   браузера. Чтобы это ощущалось приложением, а не сайтом, нужно убрать
+   всё «браузерное»: резиновую прокрутку, подсветку тапов, выделение
+   текста, зум по двойному тапу и вызов меню долгим нажатием. */
+
+html{
+  height:100%;
+  overscroll-behavior:none;              /* без оттягивания страницы */
+  -webkit-text-size-adjust:100%;         /* Safari не крутит кегль сам */
+}
+body{
+  overscroll-behavior:none;
+  -webkit-tap-highlight-color:transparent;
+  -webkit-touch-callout:none;
+  touch-action:manipulation;             /* без зума по двойному тапу */
+}
+body.touch{ -webkit-user-select:none; user-select:none }
+
+/* Вырез и «домашняя» полоска: держим содержимое подальше от краёв. */
+.screen{
+  padding-top:max(24px, env(safe-area-inset-top));
+  padding-bottom:max(24px, env(safe-area-inset-bottom));
+  padding-left:max(24px, env(safe-area-inset-left));
+  padding-right:max(24px, env(safe-area-inset-right));
+}
+#screen-game{ padding:0; touch-action:none }
+/* меню и лобби прокручиваются, но не тянут за собой страницу */
+#screen-menu, #screen-lobby{ overscroll-behavior:contain; -webkit-overflow-scrolling:touch }
+
+/* ---------- Экранное управление ---------- */
+.touch-pad{ display:none }
+body.touch .touch-pad{
+  display:block;
+  position:absolute; inset:0; z-index:6;
+  pointer-events:none;                   /* ловят касания только кнопки */
+}
+
+.tp-left,.tp-right{
+  position:absolute; bottom:max(12px, env(safe-area-inset-bottom));
+  display:flex; align-items:flex-end; gap:8px;
+}
+.tp-left{ left:max(12px, env(safe-area-inset-left)) }
+.tp-right{
+  right:max(12px, env(safe-area-inset-right));
+  display:grid; grid-template-columns:repeat(3, var(--tb)); gap:7px;
+}
+
+/* Размер кнопки от высоты экрана: на маленьком телефоне мельче, но не
+   меньше пальца, на планшете крупнее — и всё равно не во весь экран. */
+:root{ --tb:clamp(46px, 10.5vh, 74px) }
+
+.tp-pad{
+  display:grid;
+  grid-template-columns:repeat(3, var(--tb));
+  grid-template-rows:repeat(2, var(--tb));
+  gap:7px;
+}
+.tb-u{ grid-area:1 / 2 }
+.tb-l{ grid-area:2 / 1 }
+.tb-d{ grid-area:2 / 2 }
+.tb-r{ grid-area:2 / 3 }
+
+.tbtn{
+  pointer-events:auto;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  width:var(--tb); height:var(--tb);
+  border:1px solid var(--line); border-radius:16px;
+  background:rgba(10,10,20,.44);
+  backdrop-filter:blur(6px);
+  font-family:'Bebas Neue',Impact,sans-serif;
+  letter-spacing:.06em; color:var(--text);
+  transition:transform .06s, background .1s, border-color .1s;
+}
+.tbtn .tbl{ font-size:clamp(15px, 3.4vh, 21px); line-height:1 }
+.tbtn.on{ transform:scale(.93); background:rgba(255,255,255,.14) }
+
+/* Цвет подсказывает, чем бьёшь: руки — циан, ноги — маджента,
+   блок — янтарь. Те же цвета, что и везде в интерфейсе. */
+.tb-hand{ border-color:rgba(0,229,255,.34); color:var(--cyan) }
+.tb-hand.on{ background:rgba(0,229,255,.24); border-color:var(--cyan) }
+.tb-leg{ border-color:rgba(255,45,111,.34); color:var(--pink) }
+.tb-leg.on{ background:rgba(255,45,111,.24); border-color:var(--pink) }
+.tb-block{
+  border-color:rgba(255,179,0,.4); color:var(--amber);
+  height:calc(var(--tb) * 2 + 7px);      /* во всю высоту крестовины */
+}
+.tb-block.on{ background:rgba(255,179,0,.24); border-color:var(--amber) }
+
+/* Табло и служебные плашки уезжают вверх, чтобы не лезть под пальцы. */
+body.touch .taunt-bar{ top:max(10px, env(safe-area-inset-top)); bottom:auto;
+  right:max(10px, env(safe-area-inset-right)) }
+body.touch .taunt-btn{ width:38px; padding:4px 0 3px }
+body.touch .taunt-btn .tk{ display:none }
+body.touch .net-badge{ top:max(10px, env(safe-area-inset-top)); bottom:auto;
+  left:max(10px, env(safe-area-inset-left)) }
+body.touch .hud-score{ top:max(10px, env(safe-area-inset-top)) }
+
+/* На телефоне раскладка клавиш не нужна — вместо неё своя строка. */
+.touch-only{ display:none }
+body.touch .touch-only{ display:block }
+body.touch .controls-grid{ display:none }
+
+/* ---------- Просьба повернуть телефон ---------- */
+.rotate-hint{ display:none }
+@media (orientation:portrait){
+  body.touch.in-game .rotate-hint{
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+    position:fixed; inset:0; z-index:60;
+    background:var(--bg); text-align:center; padding:32px;
+  }
+  .rotate-hint .rh-icon{ font-size:60px; animation:rotateTip 2.2s ease-in-out infinite }
+  .rotate-hint .rh-title{
+    font-family:'Bebas Neue',Impact,sans-serif; font-size:34px; letter-spacing:.1em;
+  }
+  .rotate-hint .rh-sub{ font-size:13px; color:var(--muted); max-width:320px; line-height:1.6 }
+}
+@keyframes rotateTip{ 0%,100%{transform:rotate(-14deg)} 50%{transform:rotate(76deg)} }
+
+/* Подсказка про ярлык — только в Safari на iPhone, до установки. */
+.pwa-hint{ display:none; margin-top:16px; font-size:12px; color:var(--muted); line-height:1.7 }
+.pwa-hint.on{ display:block }
+.pwa-hint b{ color:var(--cyan); font-weight:400 }
+
 /* =================== АДАПТИВ =================== */
 @media (max-width:760px){
   .players-strip{ grid-template-columns:repeat(2,1fr) }

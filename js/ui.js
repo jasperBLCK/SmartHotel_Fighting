@@ -29,6 +29,8 @@ const UI = (() => {
   function showScreen(name) {
     ['menu', 'lobby', 'game'].forEach(s =>
       $('#screen-' + s).classList.toggle('active', s === name));
+    // по этому классу телефон понимает, что пора просить повернуть экран
+    document.body.classList.toggle('in-game', name === 'game');
     // в лобби заранее подтягиваем детектор лиц, чтобы первая загрузка фото не ждала
     if (name === 'lobby') Face.warmup();
     if (name !== 'game') { $('#win-overlay').classList.remove('on'); $('#death-overlay').classList.remove('on'); }
@@ -47,6 +49,13 @@ const UI = (() => {
     // к моменту «СОЗДАТЬ ЛОББИ» он был уже готов
     Net.warmup();
 
+    Touch.init();
+    showInstallHint();
+
+    /* Поворот телефона меняет размер холста не мгновенно и не через
+       resize: Safari сообщает новые размеры с задержкой. */
+    window.addEventListener('orientationchange', () => setTimeout(Game.resize, 250));
+
     // разблокировка звука по первому клику/нажатию (политика браузеров)
     const unlock = () => { U.sfx.unlock(); window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); };
     window.addEventListener('pointerdown', unlock);
@@ -58,6 +67,17 @@ const UI = (() => {
     drawAvatarPreview(null);
     renderChars();
     renderTaunts();
+  }
+
+  /* Подсказка «поставь ярлык» — только там, где она уместна: iPhone/iPad
+     в Safari и игра ещё не запущена с домашнего экрана. В установленном
+     виде navigator.standalone true, и напоминать не о чем. */
+  function showInstallHint() {
+    const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const installed = navigator.standalone === true ||
+                      matchMedia('(display-mode: standalone)').matches;
+    if (iOS && !installed) $('#pwa-hint').classList.add('on');
   }
 
   /* Панель подколок на экране боя: показывает клавиши 1..5 и работает мышкой. */
