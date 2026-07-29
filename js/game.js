@@ -193,12 +193,14 @@ const Game = (() => {
     running = true;
     lastT = performance.now(); acc = 0;
     U.sfx.bell();
+    YG.gameplayStart();
     requestAnimationFrame(loop);
   }
 
   function stop() {
     running = false;
     localMask = 0;
+    YG.gameplayStop();
   }
 
   /* Игрок отключился посреди боя. */
@@ -355,6 +357,7 @@ const Game = (() => {
     const w = fighters.get(over.winner);
     UI.showWin(w ? w.name : '—', over.table, isHost);
     U.sfx.win();
+    YG.gameplayStop();
   }
 
   /* =================================================================
