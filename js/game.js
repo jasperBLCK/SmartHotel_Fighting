@@ -862,5 +862,11 @@ const Game = (() => {
     get running() { return running; },
     get isOver() { return !!over; },
     scoreTable,
+    // отладка: краткий срез состояния боя (используется автотестами)
+    debugState: () => [...fighters.values()].map(f => ({
+      n: f.name, x: Math.round(f.x), hp: f.hp, st: Math.round(f.stam),
+      gd: Math.round(f.guard), s: f.state, dead: f.dead, k: f.kills,
+      blood: decals.length,
+    })),
   };
 })();
