@@ -165,18 +165,45 @@ const UI = (() => {
       const mark = (ok, yes, no) =>
         '<span class="' + (ok ? 'ok' : 'bad') + '">' + (ok ? yes : no) + '</span>';
       const relaysOk = r.relaysOk > 0;
+      const esc = (s) => String(s).replace(/[<&]/g, c => (c === '<' ? '&lt;' : '&amp;'));
 
       const lines = [
         '<b>Релеи</b> (поиск соперника): ' +
-          mark(relaysOk, r.relaysOk + ' из ' + r.relaysTotal + ' доступны',
-                         'ни один не отвечает'),
-        '<b>Внешний адрес</b> (STUN): ' + mark(r.ice.srflx, 'получен', 'не получен'),
-        '<b>Ретранслятор</b> (TURN): ' +
-          mark(r.ice.relay, 'работает',
-               r.hasTurn ? 'указан, но не отвечает' : 'не задан'),
+          mark(relaysOk, r.relaysOk + ' из ' + r.relaysTotal + ' передают объявления',
+                         'ни один не передаёт объявления'),
       ];
 
-      if (!relaysOk) {
+      /* Построчно: с этим списком можно сравнить два компьютера и увидеть,
+         есть ли у них вообще общий рабочий релей — без общего они друг
+         друга не найдут, как бы «зелено» ни выглядела проверка. */
+      const WHY = {
+        ok: 'работает', offline: 'не отвечает',
+        silent: 'молчит (объявление не вернулось)',
+        refused: 'отказал', nolib: 'модуль не загрузился',
+      };
+      r.relays.forEach(x => {
+        lines.push('&nbsp;&nbsp;<span class="' + (x.state === 'ok' ? 'ok' : 'bad') + '">' +
+          (x.state === 'ok' ? '+' : '−') + '</span> ' +
+          esc(x.url.replace('wss://', '')) + ' — ' + (WHY[x.state] || x.state) +
+          (x.note ? ': ' + esc(String(x.note).slice(0, 60)) : ''));
+      });
+
+      /* Расхождение часов ломает поиск соперника незаметно. */
+      if (r.skew !== null && r.skew !== undefined) {
+        const off = Math.abs(r.skew);
+        lines.push('<b>Часы компьютера</b>: ' + mark(off <= 30,
+          'точные', (r.skew > 0 ? 'отстают' : 'спешат') + ' на ' + off + ' с'));
+      }
+
+      lines.push('<b>Внешний адрес</b> (STUN): ' + mark(r.ice.srflx, 'получен', 'не получен'));
+      lines.push('<b>Ретранслятор</b> (TURN): ' +
+        mark(r.ice.relay, 'работает', r.hasTurn ? 'указан, но не отвечает' : 'не задан'));
+
+      if (r.skew !== null && r.skew !== undefined && Math.abs(r.skew) > 30) {
+        lines.push('→ Сбиты часы: из-за этого объявления игроков отбрасываются ' +
+                   'и комната «не находится». Включи автоматическое время в ' +
+                   'настройках системы и обнови страницу.');
+      } else if (!relaysOk) {
         lines.push('→ Игра не найдёт соперника: до релеев не доходит трафик. ' +
                    'Проверь интернет или попробуй другую сеть.');
       } else if (!r.ice.srflx && !r.ice.relay) {
