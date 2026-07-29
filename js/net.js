@@ -1,166 +1,211 @@
 /* ===================================================================
-   net.js — сеть на PeerJS (WebRTC). Своего бэкенда нет.
+   net.js — сеть на WebRTC через Trystero (стратегия Nostr).
 
-   Топология «звезда»:
-     ХОСТ  — создаёт Peer с фиксированным id вида "SHF-XXXXX",
-             принимает подключения, считает физику, шлёт состояние.
-     КЛИЕНТ— подключается к id хоста, шлёт только свой инпут.
+   Почему не PeerJS: у него один публичный брокер (0.peerjs.com), и если
+   провайдер его режет — игра не работает вообще. Здесь для «знакомства»
+   игроков используются публичные Nostr-релеи: их десятки, подключаемся
+   сразу к нескольким, достаточно чтобы работал хоть один.
 
-   Все сообщения — обычные JS-объекты с полем t (тип).
-   Ничего не сохраняется: ни на сервере, ни в localStorage.
+   Сама библиотека лежит в js/vendor — ничего не грузится с CDN, поэтому
+   на GitHub Pages всё поднимается даже при заблокированных CDN.
+
+   Адреса релеев, STUN и TURN вынесены в net-config.js — там же написано,
+   как подключить свой ретранслятор, если прямое соединение не проходит.
+
+   Топология прежняя, «звезда»:
+     ХОСТ   — создаёт комнату, считает физику, рассылает состояние.
+     КЛИЕНТ — подключается по коду, шлёт хосту только свой инпут.
+
+   Никакого бэкенда и никаких данных игроков на стороне: в localStorage
+   хранится ровно одна вещь — адрес TURN, если его передали ссылкой.
    =================================================================== */
 
 const Net = (() => {
 
-  const PREFIX = 'SHF-';          // префикс peer id, чтобы код комнаты был коротким
-  const PING_EVERY = 1000;        // как часто мерить задержку, мс
+  const APP_ID = 'smart-hotel-fighting';
+  const ROOM_PREFIX = 'shf-';
+  const PING_EVERY = 2000;
+  const HOST_WAIT = 25000;        // сколько ждём отклика хоста при входе
+  const RELAY_WAIT = 20000;       // сколько ждём подключения к релеям
 
-  let peer = null;
+  let lib = null;                 // загруженный модуль Trystero
+  let room = null;
+  let sendMsg = null;
   let isHost = false;
-  let myId = null;                // 'host' у хоста, peer id у клиента
-  let code = null;                // код комнаты (заглавные буквы/цифры)
-  const conns = new Map();        // (только хост) pid -> DataConnection
-  let hostConn = null;            // (только клиент) соединение с хостом
+  let myId = null;
+  let code = null;
+  let hostId = null;              // (клиент) id хоста
+  const peers = new Set();        // (хост) id подключившихся клиентов
   let pingTimer = null;
   let ping = 0;
+  let hostTimer = null;
+  let pendingReady = null;        // колбэк клиента, ждущий отклика хоста
+  let sawPeer = false;            // соперник найден через релей (до WebRTC)
 
-  /* Подписки: Net.on('input', fn). Тип '*' — все сообщения. */
+  /* Подписки: Net.on('in', fn). Тип '*' — все сообщения. */
   const handlers = {};
   function on(type, fn) { (handlers[type] || (handlers[type] = [])).push(fn); }
   function emit(type, ...args) { (handlers[type] || []).forEach(f => f(...args)); }
 
-  /*
-    Конфиг PeerJS: публичный брокер + STUN и TURN.
-
-    STUN хватает, когда хотя бы одна сторона за обычным NAT — это большинство
-    домашних роутеров. Но мобильный интернет и строгие NAT так не пробиваются,
-    поэтому добавлены бесплатные публичные TURN-серверы (трафик идёт через них).
-    Хочешь стабильности — заведи свой TURN (coturn / metered.ca) и подставь сюда.
-  */
-  function peerOpts() {
-    return {
-      debug: 1,
-      config: {
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:global.stun.twilio.com:3478' },
-          { urls: 'turn:openrelay.metered.ca:80',
-            username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443',
-            username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-            username: 'openrelayproject', credential: 'openrelayproject' },
-          { urls: 'turn:staticauth.openrelay.metered.ca:80',
-            username: 'openrelayproject', credential: 'openrelayproject' },
-        ],
-        iceCandidatePoolSize: 4,
-      },
-    };
+  /* Библиотека лежит рядом с игрой, поэтому путь считаем от страницы. */
+  async function load() {
+    if (lib) return lib;
+    const url = new URL('js/vendor/trystero-p2p-nostr.mjs', location.href).href;
+    lib = await import(url);
+    return lib;
   }
 
-  /* ---------------- ХОСТ ---------------- */
+  /* Сколько релеев реально подключилось (для диагностики). */
+  function liveRelays() {
+    try {
+      const s = lib && lib.getRelaySockets ? lib.getRelaySockets() : {};
+      return Object.values(s).filter(x => x && x.readyState === 1).length;
+    } catch (e) { return 0; }
+  }
 
-  /*
-    Создать комнату. Пробуем занять id "SHF-КОД"; если занят — генерим новый код.
-    onReady(code) вызывается, когда брокер подтвердил регистрацию.
-  */
-  function createRoom(onReady, onFail, attempt = 0) {
+  /* Ждём, пока поднимется хотя бы один релей. */
+  function waitForRelays(timeout) {
+    return new Promise((res, rej) => {
+      const t0 = Date.now();
+      const tick = () => {
+        if (liveRelays() > 0) return res(liveRelays());
+        if (Date.now() - t0 > timeout) return rej(new Error('нет связи ни с одним релеем'));
+        setTimeout(tick, 250);
+      };
+      tick();
+    });
+  }
+
+  /* Сбой на этапе знакомства. Важно различать два случая: соперника не
+     видно вообще (не та комната / релеи не доходят) и соперник найден, но
+     WebRTC между вами не поднялся — это уже NAT, и лечится только TURN. */
+  function onJoinError(err) {
+    const e = err || {};
+    if (e.peerId) sawPeer = true;
+    console.warn('net:', e.error || err);
+    // хосту важно знать: до него достучались, но канал не поднялся
+    if (isHost && e.peerId) emit('icefail', e.peerId);
+  }
+
+  /* Понятное объяснение, почему клиент не достучался до хоста. */
+  function joinFailReason() {
+    if (!sawPeer) {
+      return 'Комната ' + code + ' не найдена. Проверь код и что хост в игре.';
+    }
+    return 'Хост найден, но прямое соединение не установилось — так бывает на ' +
+      'мобильном интернете и строгом NAT.' +
+      (NetConfig.hasTurn ? ' Ретранслятор тоже не помог — попробуй другую сеть.'
+                         : ' Нужен свой TURN-сервер, см. js/net-config.js.');
+  }
+
+  /* ---------------- Общий вход в комнату ---------------- */
+  async function open(roomCode, asHost, onReady, onFail) {
     destroy();
-    isHost = true; myId = 'host';
-    code = U.makeCode(5);
+    isHost = asHost;
+    code = roomCode;
+    pendingReady = asHost ? null : onReady;
 
-    peer = new Peer(PREFIX + code, peerOpts());
+    let T;
+    try {
+      T = await load();
+    } catch (e) {
+      const m = 'Не удалось загрузить сетевой модуль';
+      emit('error', m); if (onFail) onFail(m);
+      return;
+    }
 
-    peer.on('open', (id) => {
+    myId = T.selfId;
+
+    try {
+      room = T.joinRoom(
+        {
+          appId: APP_ID,
+          relayConfig: { urls: NetConfig.relays() },
+          rtcConfig: { iceServers: NetConfig.iceServers() },
+        },
+        ROOM_PREFIX + roomCode,
+        { onJoinError: onJoinError }
+      );
+    } catch (e) {
+      const m = 'Не удалось создать комнату: ' + (e.message || e);
+      emit('error', m); if (onFail) onFail(m);
+      return;
+    }
+
+    const act = room.makeAction('m');
+    sendMsg = (msg, target) => act.send(msg, target ? { target } : undefined);
+    act.onMessage = (data, meta) => route(meta && meta.peerId, data);
+
+    /* --- кто-то появился в комнате --- */
+    room.onPeerJoin = (pid) => {
+      if (!isHost) return;   // клиент ждёт 'iam', другие клиенты ему не интересны
+      if (peers.size >= 3) { // 4 игрока вместе с хостом
+        sendMsg({ t: 'full' }, pid);
+        return;
+      }
+      peers.add(pid);
+      // представляемся хостом, чтобы клиент понял, к кому обращаться
+      sendMsg({ t: 'iam', host: 1 }, pid);
+      emit('join', pid);
+    };
+
+    room.onPeerLeave = (pid) => {
+      if (isHost) {
+        if (peers.delete(pid)) emit('leave', pid);
+      } else if (pid === hostId) {
+        stopPing();
+        emit('hostgone');
+      }
+    };
+
+    /* --- ждём релеи --- */
+    try {
+      await waitForRelays(RELAY_WAIT);
+    } catch (e) {
+      const m = 'Не удалось подключиться ни к одному релею. Проверь интернет ' +
+                'и нажми «ПРОВЕРИТЬ СЕТЬ» — станет видно, что именно не проходит.';
+      emit('error', m); if (onFail) onFail(m);
+      return;
+    }
+
+    if (isHost) {
       emit('open', code);
       if (onReady) onReady(code);
-    });
-
-    /* Кто-то подключился к нам. */
-    peer.on('connection', (conn) => {
-      conn.on('open', () => {
-        // больше 3 клиентов (4 игрока с хостом) не пускаем
-        if (conns.size >= 3) {
-          conn.send({ t: 'full' });
-          setTimeout(() => conn.close(), 300);
-          return;
-        }
-        conns.set(conn.peer, conn);
-        emit('join', conn.peer);
-      });
-      conn.on('data', (msg) => route(conn.peer, msg));
-      conn.on('close', () => {
-        if (conns.delete(conn.peer)) emit('leave', conn.peer);
-      });
-      conn.on('error', () => {
-        if (conns.delete(conn.peer)) emit('leave', conn.peer);
-      });
-    });
-
-    peer.on('error', (err) => {
-      // id занят — берём другой код и пробуем снова (до 5 раз)
-      if (err.type === 'unavailable-id' && attempt < 5) {
-        return createRoom(onReady, onFail, attempt + 1);
-      }
-      if (err.type === 'peer-unavailable') return; // не критично для хоста
-      emit('error', humanError(err));
-      if (onFail) onFail(humanError(err));
-    });
-
-    peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) { } });
+    } else {
+      // клиент ждёт, пока хост его заметит и представится
+      hostTimer = setTimeout(() => {
+        if (hostId) return;
+        const m = joinFailReason();
+        emit('error', m); if (onFail) onFail(m);
+        destroy();
+      }, HOST_WAIT);
+    }
   }
 
-  /* ---------------- КЛИЕНТ ---------------- */
-
-  /* Подключиться к комнате по коду. */
+  /* ---------------- Публичный вход ---------------- */
+  function createRoom(onReady, onFail) {
+    open(U.makeCode(5), true, onReady, onFail);
+  }
   function joinRoom(roomCode, onReady, onFail) {
-    destroy();
-    isHost = false;
-    code = String(roomCode || '').trim().toUpperCase();
-    if (code.length < 4) { if (onFail) onFail('Слишком короткий код'); return; }
-
-    peer = new Peer(null, peerOpts());
-
-    let settled = false;
-    const fail = (m) => { if (!settled) { settled = true; if (onFail) onFail(m); } };
-
-    peer.on('open', (id) => {
-      myId = id;
-      // serialization по умолчанию (binarypack) — умеет резать большие сообщения
-      // на чанки, это важно для фото арены (сотни килобайт).
-      hostConn = peer.connect(PREFIX + code, { reliable: true });
-
-      const timeout = setTimeout(() => fail('Комната не отвечает. Проверь код.'), 12000);
-
-      hostConn.on('open', () => {
-        clearTimeout(timeout);
-        settled = true;
-        startPing();
-        emit('open', code);
-        if (onReady) onReady(myId);
-      });
-      hostConn.on('data', (msg) => route('host', msg));
-      hostConn.on('close', () => { stopPing(); emit('hostgone'); });
-      hostConn.on('error', () => fail('Ошибка соединения с хостом'));
-    });
-
-    peer.on('error', (err) => {
-      const m = humanError(err);
-      if (err.type === 'peer-unavailable') return fail('Комната ' + code + ' не найдена');
-      fail(m);
-      emit('error', m);
-    });
+    const c = String(roomCode || '').trim().toUpperCase();
+    if (c.length < 4) { if (onFail) onFail('Слишком короткий код'); return; }
+    open(c, false, onReady, onFail);
   }
 
-  /* ---------------- Приём/маршрутизация ---------------- */
-
+  /* ---------------- Приём ---------------- */
   function route(from, msg) {
     if (!msg || typeof msg !== 'object') return;
 
-    // служебный пинг-понг для измерения задержки
-    if (msg.t === 'png') { sendTo(from, { t: 'pog', ts: msg.ts }); return; }
-    if (msg.t === 'pog') { ping = Math.max(0, Date.now() - msg.ts); return; }
+    // хост представился — с этого момента клиент знает, куда слать инпут
+    if (msg.t === 'iam') {
+      if (isHost) return;
+      hostId = from;
+      if (hostTimer) { clearTimeout(hostTimer); hostTimer = null; }
+      startPing();
+      emit('open', code);
+      if (pendingReady) { pendingReady(myId); pendingReady = null; }
+      return;
+    }
     if (msg.t === 'full') { emit('error', 'Комната заполнена (уже 4 игрока)'); return; }
 
     emit(msg.t, from, msg);
@@ -168,64 +213,114 @@ const Net = (() => {
   }
 
   /* ---------------- Отправка ---------------- */
-
-  /* Клиент -> хосту. */
   function toHost(msg) {
-    if (hostConn && hostConn.open) { try { hostConn.send(msg); } catch (e) { } }
+    if (sendMsg && hostId) { try { sendMsg(msg, hostId); } catch (e) { } }
   }
-  /* Хост -> конкретному клиенту (или клиент -> хосту, если from='host'). */
   function sendTo(pid, msg) {
     if (pid === 'host') return toHost(msg);
-    const c = conns.get(pid);
-    if (c && c.open) { try { c.send(msg); } catch (e) { } }
+    if (sendMsg && pid) { try { sendMsg(msg, pid); } catch (e) { } }
   }
-  /* Хост -> всем клиентам. exceptPid можно исключить. */
   function broadcast(msg, exceptPid) {
-    conns.forEach((c, pid) => {
-      if (pid === exceptPid) return;
-      if (c.open) { try { c.send(msg); } catch (e) { } }
+    if (!sendMsg) return;
+    const targets = [...peers].filter(p => p !== exceptPid);
+    if (!targets.length) return;
+    try { sendMsg(msg, targets); } catch (e) { }
+  }
+
+  /* ---------------- Пинг (Trystero умеет сам) ---------------- */
+  function startPing() {
+    stopPing();
+    pingTimer = setInterval(async () => {
+      if (!room || !hostId) return;
+      try { ping = Math.round(await room.ping(hostId)); } catch (e) { }
+    }, PING_EVERY);
+  }
+  function stopPing() { if (pingTimer) { clearInterval(pingTimer); pingTimer = null; } }
+
+  /* ---------------- Завершение ---------------- */
+  function destroy() {
+    stopPing();
+    if (hostTimer) { clearTimeout(hostTimer); hostTimer = null; }
+    pendingReady = null;
+    if (room) { try { room.leave(); } catch (e) { } room = null; }
+    sendMsg = null;
+    peers.clear();
+    hostId = null; code = null; ping = 0;
+    sawPeer = false;
+  }
+
+  /* ---------------- Диагностика ----------------
+     Отвечает на вопрос «почему не соединяется»: отдельно проверяем
+     доступность релеев и отдельно — проходят ли STUN/TURN. Ничего не
+     ломает и не мешает игре: используются свои временные соединения. */
+
+  function probeRelay(url, timeout = 6000) {
+    return new Promise(res => {
+      const t0 = Date.now();
+      let ws, done = false;
+      const fin = (ok) => {
+        if (done) return; done = true;
+        try { ws && ws.close(); } catch (e) { }
+        res({ url, ok, ms: Date.now() - t0 });
+      };
+      try { ws = new WebSocket(url); } catch (e) { return fin(false); }
+      const timer = setTimeout(() => fin(false), timeout);
+      ws.onopen = () => { clearTimeout(timer); fin(true); };
+      ws.onerror = () => { clearTimeout(timer); fin(false); };
     });
   }
 
-  /* ---------------- Пинг ---------------- */
-  function startPing() {
-    stopPing();
-    pingTimer = setInterval(() => toHost({ t: 'png', ts: Date.now() }), PING_EVERY);
+  /* Собираем ICE-кандидатов: srflx значит «STUN работает и внешний адрес
+     известен», relay — «TURN работает». Только host — почти наверняка
+     соединимся лишь внутри одной локальной сети. */
+  function probeIce(timeout = 8000) {
+    return new Promise(res => {
+      let pc, done = false;
+      const types = new Set();
+      const fin = () => {
+        if (done) return; done = true;
+        try { pc && pc.close(); } catch (e) { }
+        res({ host: types.has('host'), srflx: types.has('srflx'), relay: types.has('relay') });
+      };
+      try {
+        pc = new RTCPeerConnection({ iceServers: NetConfig.iceServers() });
+      } catch (e) { return fin(); }
+      const timer = setTimeout(fin, timeout);
+      pc.onicecandidate = (ev) => {
+        if (!ev.candidate) { clearTimeout(timer); return fin(); }
+        const t = (ev.candidate.candidate.match(/ typ (\w+)/) || [])[1];
+        if (t) types.add(t);
+      };
+      try {
+        pc.createDataChannel('probe');
+        pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => { clearTimeout(timer); fin(); });
+      } catch (e) { clearTimeout(timer); fin(); }
+    });
   }
-  function stopPing() { if (pingTimer) clearInterval(pingTimer), pingTimer = null; }
 
-  /* ---------------- Прочее ---------------- */
-
-  function humanError(err) {
-    const map = {
-      'browser-incompatible': 'Браузер не поддерживает WebRTC',
-      'network': 'Нет связи с сигнальным сервером',
-      'server-error': 'Сигнальный сервер недоступен, попробуй позже',
-      'socket-error': 'Обрыв связи с сервером',
-      'ssl-unavailable': 'Проблема с SSL',
-      'unavailable-id': 'Код комнаты занят',
-      'webrtc': 'Ошибка WebRTC-соединения',
+  async function diagnose() {
+    const urls = NetConfig.relays();
+    const [relayResults, ice] = await Promise.all([
+      Promise.all(urls.map(u => probeRelay(u))),
+      probeIce(),
+    ]);
+    return {
+      relays: relayResults,
+      relaysOk: relayResults.filter(r => r.ok).length,
+      relaysTotal: urls.length,
+      ice,
+      hasTurn: NetConfig.hasTurn,
     };
-    return map[err.type] || ('Ошибка сети: ' + (err.type || err.message || '?'));
-  }
-
-  /* Полностью разорвать всё и обнулить состояние. */
-  function destroy() {
-    stopPing();
-    conns.forEach(c => { try { c.close(); } catch (e) { } });
-    conns.clear();
-    if (hostConn) { try { hostConn.close(); } catch (e) { } hostConn = null; }
-    if (peer) { try { peer.destroy(); } catch (e) { } peer = null; }
-    myId = null; code = null; ping = 0;
   }
 
   return {
-    on, createRoom, joinRoom, toHost, sendTo, broadcast, destroy,
+    on, createRoom, joinRoom, toHost, sendTo, broadcast, destroy, diagnose,
     get isHost() { return isHost; },
     get myId() { return myId; },
     get code() { return code; },
     get ping() { return ping; },
-    get clientIds() { return Array.from(conns.keys()); },
-    get clientCount() { return conns.size; },
+    get relays() { return liveRelays(); },
+    get clientIds() { return [...peers]; },
+    get clientCount() { return peers.size; },
   };
 })();

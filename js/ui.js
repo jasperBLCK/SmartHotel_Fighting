@@ -149,6 +149,49 @@ const UI = (() => {
       );
     };
 
+    /* Самопроверка: показывает, что из трёх кусков связи работает —
+       релеи (знакомство), STUN (внешний адрес), TURN (ретранслятор). */
+    $('#btn-netcheck').addEventListener('click', async () => {
+      U.sfx.ui();
+      const out = $('#netcheck-out'), btn = $('#btn-netcheck');
+      out.classList.add('on');
+      out.textContent = 'Проверяем…';
+      btn.disabled = true;
+      let r;
+      try { r = await Net.diagnose(); }
+      catch (e) { out.textContent = 'Проверка не удалась: ' + (e.message || e); btn.disabled = false; return; }
+      btn.disabled = false;
+
+      const mark = (ok, yes, no) =>
+        '<span class="' + (ok ? 'ok' : 'bad') + '">' + (ok ? yes : no) + '</span>';
+      const relaysOk = r.relaysOk > 0;
+
+      const lines = [
+        '<b>Релеи</b> (поиск соперника): ' +
+          mark(relaysOk, r.relaysOk + ' из ' + r.relaysTotal + ' доступны',
+                         'ни один не отвечает'),
+        '<b>Внешний адрес</b> (STUN): ' + mark(r.ice.srflx, 'получен', 'не получен'),
+        '<b>Ретранслятор</b> (TURN): ' +
+          mark(r.ice.relay, 'работает',
+               r.hasTurn ? 'указан, но не отвечает' : 'не задан'),
+      ];
+
+      if (!relaysOk) {
+        lines.push('→ Игра не найдёт соперника: до релеев не доходит трафик. ' +
+                   'Проверь интернет или попробуй другую сеть.');
+      } else if (!r.ice.srflx && !r.ice.relay) {
+        lines.push('→ Браузер не узнал свой внешний адрес. Соединение получится ' +
+                   'только с игроком в той же локальной сети.');
+      } else if (r.ice.relay) {
+        lines.push('→ Всё на месте, соединение должно проходить с любым игроком.');
+      } else {
+        lines.push('→ С большинством игроков соединится. Если с кем-то не выходит — ' +
+                   'дело в строгом NAT, нужен TURN (как подключить — в js/net-config.js).');
+      }
+
+      out.innerHTML = lines.join('<br>');
+    });
+
     $('#btn-join').addEventListener('click', doJoin);
     $('#input-code').addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
     $('#input-code').addEventListener('input', e => {
@@ -396,6 +439,15 @@ const UI = (() => {
     });
 
     Net.on('error', (m) => U.toast(m));
+
+    /* Кто-то нашёл нашу комнату, но канал до него не поднялся. Говорим об
+       этом один раз за сессию: чаще — только раздражает. */
+    let icefailShown = false;
+    Net.on('icefail', () => {
+      if (icefailShown) return;
+      icefailShown = true;
+      U.toast('Игрок не смог соединиться — строгий NAT. Помогает свой TURN (js/net-config.js)');
+    });
   }
 
   /* =================================================================

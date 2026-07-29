@@ -173,6 +173,19 @@ body{
 }
 .text-input{ width:100% }
 
+/* ---------- Самопроверка связи ---------- */
+.net-check{ margin-top:18px }
+.net-check-out{
+  font-family:'JetBrains Mono',monospace; font-size:12px;
+  color:var(--muted); line-height:1.7;
+  margin-top:12px; text-align:left;
+  display:none;
+}
+.net-check-out.on{ display:block }
+.net-check-out b{ color:var(--text); font-weight:400 }
+.net-check-out .ok{ color:var(--cyan) }
+.net-check-out .bad{ color:var(--amber) }
+
 /* ---------- Карточка управления ---------- */
 .controls-card{
   margin-top:44px;

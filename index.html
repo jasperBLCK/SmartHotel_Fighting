@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>SMART HOTEL FIGHTING</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<!-- Шрифты лежат в репозитории, а не на Google Fonts: у части провайдеров
+     он недоступен без VPN, а страница должна открываться у всех одинаково. -->
+<link rel="stylesheet" href="css/fonts.css">
 <link rel="stylesheet" href="css/styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>👊</text></svg>">
 </head>
@@ -34,6 +34,12 @@
     </div>
 
     <div class="menu-hint" id="menu-status">Хост создаёт комнату и передаёт код друзьям — играть можно из разных сетей и городов.</div>
+
+    <!-- Самопроверка связи: видно, что именно не проходит, если не соединяет -->
+    <div class="net-check">
+      <button class="btn btn-ghost btn-sm" id="btn-netcheck">ПРОВЕРИТЬ СЕТЬ</button>
+      <div class="net-check-out" id="netcheck-out"></div>
+    </div>
 
     <div class="controls-card">
       <div class="controls-title">УПРАВЛЕНИЕ</div>
@@ -161,9 +167,9 @@
 <!-- Тост-уведомления -->
 <div id="toast"></div>
 
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="js/utils.js"></script>
 <script src="js/face.js"></script>
+<script src="js/net-config.js"></script>
 <script src="js/net.js"></script>
 <script src="js/fighter.js"></script>
 <script src="js/game.js"></script>
