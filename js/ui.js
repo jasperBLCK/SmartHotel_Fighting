@@ -61,6 +61,12 @@ const UI = (() => {
     window.addEventListener('pointerdown', unlock);
     window.addEventListener('keydown', unlock);
 
+    // свернули игру — тишина; вернулись — звук снова работает
+    document.addEventListener('visibilitychange', () =>
+      document.hidden ? U.sfx.suspend() : U.sfx.resume());
+    window.addEventListener('blur', () => U.sfx.suspend());
+    window.addEventListener('focus', () => U.sfx.resume());
+
     // имя по умолчанию
     me.name = 'Боец ' + U.randInt(10, 99);
     $('#input-name').value = me.name;
