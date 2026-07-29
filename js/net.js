@@ -254,20 +254,70 @@ const Net = (() => {
      доступность релеев и отдельно — проходят ли STUN/TURN. Ничего не
      ломает и не мешает игре: используются свои временные соединения. */
 
-  function probeRelay(url, timeout = 6000) {
+  /* Проверка релея «по-настоящему»: мало открыть сокет — релей должен
+     принять наше объявление и вернуть его нам же по подписке. Ровно так
+     игроки и находят друг друга. Релей, который пускает к себе, но не
+     передаёт события (требует авторизацию, режет лимитами), для игры
+     бесполезен — и снаружи выглядит как рабочий. */
+  async function probeRelay(url, timeout = 9000) {
+    let T;
+    try { T = await load(); } catch (e) { return { url, state: 'nolib' }; }
+
+    const topic = 'shf-probe-' + Math.random().toString(36).slice(2, 10);
+    const subId = 'probe' + Math.random().toString(36).slice(2, 10);
+    const req = T.subscribe(subId, topic);
+    const event = await T.createEvent(topic, 'probe');
+
     return new Promise(res => {
       const t0 = Date.now();
       let ws, done = false;
-      const fin = (ok) => {
+      const fin = (state, note) => {
         if (done) return; done = true;
+        clearTimeout(timer);
         try { ws && ws.close(); } catch (e) { }
-        res({ url, ok, ms: Date.now() - t0 });
+        res({ url, state, note, ms: Date.now() - t0 });
       };
-      try { ws = new WebSocket(url); } catch (e) { return fin(false); }
-      const timer = setTimeout(() => fin(false), timeout);
-      ws.onopen = () => { clearTimeout(timer); fin(true); };
-      ws.onerror = () => { clearTimeout(timer); fin(false); };
+      /* Не всякий релей возвращает событие тому же соединению, откуда оно
+         пришло. Поэтому подтверждение приёма («OK ... true») тоже считаем
+         за успех — просто помечаем, что эхо не проверено. */
+      let accepted = false;
+      const timer = setTimeout(() => {
+        if (accepted) return fin('ok', 'принято, эхо не проверено');
+        fin(ws && ws.readyState === 1 ? 'silent' : 'offline');
+      }, timeout);
+
+      try { ws = new WebSocket(url); } catch (e) { return fin('offline'); }
+
+      ws.onerror = () => fin('offline');
+      ws.onclose = () => fin(accepted ? 'ok' : 'offline', accepted ? 'принято, эхо не проверено' : '');
+      ws.onopen = () => { ws.send(req); ws.send(event); };
+      ws.onmessage = (m) => {
+        let f;
+        try { f = JSON.parse(m.data); } catch (e) { return; }
+        // наше же объявление вернулось по подписке — релей точно пригоден
+        if (f[0] === 'EVENT' && f[1] === subId) return fin('ok');
+        if (f[0] === 'OK' && f[2] === true) { accepted = true; return; }
+        // релей отказался принимать объявление и сказал почему
+        if (f[0] === 'OK' && f[2] === false) return fin('refused', f[3]);
+        if (f[0] === 'CLOSED') return fin('refused', f[2]);
+        if (f[0] === 'NOTICE') return fin('refused', f[1]);
+      };
     });
+  }
+
+  /* Часы. Релеи отбрасывают объявления «из прошлого» относительно подписки,
+     поэтому разъехавшиеся часы на одном из компьютеров делают игроков
+     невидимыми друг для друга — а выглядит это как «комната не найдена».
+     Точное время берём из заголовка ответа сервера, откуда открыта игра. */
+  async function clockSkew() {
+    try {
+      const t0 = Date.now();
+      const r = await fetch(location.href, { method: 'HEAD', cache: 'no-store' });
+      const d = r.headers.get('date');
+      if (!d) return null;
+      const rtt = Date.now() - t0;
+      return Math.round((Date.parse(d) + rtt / 2 - Date.now()) / 1000);
+    } catch (e) { return null; }
   }
 
   /* Собираем ICE-кандидатов: srflx значит «STUN работает и внешний адрес
@@ -300,16 +350,19 @@ const Net = (() => {
 
   async function diagnose() {
     const urls = NetConfig.relays();
-    const [relayResults, ice] = await Promise.all([
+    const [relays, ice, skew] = await Promise.all([
       Promise.all(urls.map(u => probeRelay(u))),
       probeIce(),
+      clockSkew(),
     ]);
     return {
-      relays: relayResults,
-      relaysOk: relayResults.filter(r => r.ok).length,
+      relays,
+      relaysOk: relays.filter(r => r.state === 'ok').length,
       relaysTotal: urls.length,
       ice,
+      skew,                       // сек; + значит часы отстают, − спешат
       hasTurn: NetConfig.hasTurn,
+      selfId: myId || (lib && lib.selfId) || null,
     };
   }
 
