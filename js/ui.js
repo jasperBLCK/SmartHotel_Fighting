@@ -43,6 +43,10 @@ const UI = (() => {
     bindLobby();
     bindNet();
 
+    // подбор рабочих релеев занимает пару секунд — начинаем сразу, чтобы
+    // к моменту «СОЗДАТЬ ЛОББИ» он был уже готов
+    Net.warmup();
+
     // разблокировка звука по первому клику/нажатию (политика браузеров)
     const unlock = () => { U.sfx.unlock(); window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); };
     window.addEventListener('pointerdown', unlock);
@@ -108,14 +112,21 @@ const UI = (() => {
       el.classList.toggle('err', !!err);
     };
 
+    /* Пока идёт подбор релеев, сеть рассказывает о ходе дела. Показываем
+       это только во время создания/входа: в покое надпись в меню своя. */
+    let busy = false;
+    Net.on('status', (m) => { if (busy) status(m); });
+
     $('#btn-create').addEventListener('click', () => {
       U.sfx.ui();
+      busy = true;
       $('#btn-create').disabled = true;
       status('Создаём комнату…');
       Net.createRoom(
         (code) => {
           isHost = true;
           players = [{ pid: 'host', name: me.name, avatar: me.avatar, char: me.char }];
+          busy = false;
           $('#btn-create').disabled = false;
           $('#room-code').textContent = code;
           $('#host-panel').style.display = 'flex';
@@ -124,7 +135,7 @@ const UI = (() => {
           renderPlayers();
           status('');
         },
-        (err) => { $('#btn-create').disabled = false; status(err, true); }
+        (err) => { busy = false; $('#btn-create').disabled = false; status(err, true); }
       );
     });
 
@@ -132,11 +143,13 @@ const UI = (() => {
       const code = $('#input-code').value.trim().toUpperCase();
       if (code.length < 4) return status('Введи код комнаты', true);
       U.sfx.ui();
+      busy = true;
       $('#btn-join').disabled = true;
       status('Подключаемся к ' + code + '…');
       Net.joinRoom(code,
         () => {
           isHost = false;
+          busy = false;
           $('#btn-join').disabled = false;
           $('#room-code').textContent = code;
           $('#host-panel').style.display = 'none';
@@ -145,7 +158,7 @@ const UI = (() => {
           sendProfile();
           status('');
         },
-        (err) => { $('#btn-join').disabled = false; status(err, true); }
+        (err) => { busy = false; $('#btn-join').disabled = false; status(err, true); }
       );
     };
 
@@ -171,6 +184,9 @@ const UI = (() => {
         '<b>Релеи</b> (поиск соперника): ' +
           mark(relaysOk, r.relaysOk + ' из ' + r.relaysTotal + ' передают объявления',
                          'ни один не передаёт объявления'),
+        '<span class="dim">проверена голова списка из ' + r.relaysPool +
+          '; игра сама берёт первые ' + r.relaysWant + ' рабочих и пересобирает ' +
+          'набор при смене сети</span>',
       ];
 
       /* Построчно: с этим списком можно сравнить два компьютера и увидеть,
