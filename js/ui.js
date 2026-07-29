@@ -83,7 +83,10 @@ const UI = (() => {
                 (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const installed = navigator.standalone === true ||
                       matchMedia('(display-mode: standalone)').matches;
-    if (iOS && !installed) $('#pwa-hint').classList.add('on');
+    // в iframe (Яндекс Игры и т.п.) ярлык не ставится — подсказка неуместна
+    let framed = false;
+    try { framed = window !== window.top; } catch (e) { framed = true; }
+    if (iOS && !installed && !framed) $('#pwa-hint').classList.add('on');
   }
 
   /* Панель подколок на экране боя: показывает клавиши 1..5 и работает мышкой. */
@@ -616,5 +619,5 @@ const UI = (() => {
   return { init, showScreen, updateHUD, showWin };
 })();
 
-/* Поехали. */
-window.addEventListener('DOMContentLoaded', UI.init);
+/* Поехали. Сначала меню готово к игре, потом сообщаем площадке ready(). */
+window.addEventListener('DOMContentLoaded', () => { UI.init(); YG.init(); });
