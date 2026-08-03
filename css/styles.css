@@ -116,6 +116,59 @@ body{
 .menu-hint{ margin-top:22px; color:var(--muted); font-size:12px; min-height:18px }
 .menu-hint.err{ color:var(--pink) }
 
+.quick-note{ color:var(--muted); font-size:12px; line-height:1.6; max-width:420px; margin-top:-6px }
+
+/* «или с друзьями по коду» — линия с подписью посередине */
+.menu-split{
+  display:flex; align-items:center; gap:14px;
+  width:100%; margin:4px 0 2px;
+  color:var(--muted); font-size:10px; letter-spacing:.28em; text-transform:uppercase;
+}
+.menu-split::before,.menu-split::after{
+  content:''; flex:1; height:1px; background:var(--line);
+}
+
+/* ---------- Открытые комнаты ---------- */
+.rooms-block{
+  margin-top:26px; padding:16px 18px;
+  border:1px solid var(--line); border-radius:var(--r);
+  background:var(--panel); backdrop-filter:blur(14px);
+  text-align:left;
+}
+.rooms-head{ display:flex; align-items:baseline; justify-content:space-between; margin-bottom:10px }
+.rooms-title{
+  font-family:'Bebas Neue',sans-serif; font-size:16px;
+  letter-spacing:.24em; color:var(--text);
+}
+.rooms-state{ font-size:11px; letter-spacing:.14em; color:var(--muted) }
+.rooms-list{ display:flex; flex-direction:column; gap:8px }
+.rooms-empty{ font-size:12px; line-height:1.6; color:var(--muted) }
+
+.room-row{
+  display:flex; align-items:center; gap:12px; width:100%;
+  padding:11px 14px; cursor:pointer;
+  border:1px solid var(--line); border-radius:10px;
+  background:rgba(255,255,255,.04);
+  color:var(--text); font-family:inherit; text-align:left;
+  transition:.16s ease;
+}
+.room-row:hover{ border-color:var(--line-hot); background:rgba(255,45,111,.10) }
+.rr-name{ flex:1; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.rr-n{ font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--cyan) }
+.rr-go{
+  font-family:'Bebas Neue',sans-serif; font-size:14px;
+  letter-spacing:.18em; color:var(--muted);
+}
+.room-row:hover .rr-go{ color:var(--pink) }
+
+/* Галочка «видна всем» в шапке лобби */
+.pub-toggle{
+  display:flex; align-items:center; gap:7px; margin-top:9px;
+  font-size:11px; letter-spacing:.12em; color:var(--muted);
+  text-transform:uppercase; cursor:pointer; user-select:none;
+}
+.pub-toggle input{ accent-color:var(--pink); width:15px; height:15px; cursor:pointer }
+
 /* ---------- Кнопки ---------- */
 .btn{
   font-family:'Bebas Neue',sans-serif;
