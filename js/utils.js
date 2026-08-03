@@ -200,6 +200,16 @@ const U = (() => {
     setTimeout(() => el.remove(), 3100);
   }
 
+  /* ---------- Склонение числительных ----------
+     «1 комната, 2 комнаты, 5 комнат» — иначе список открытых комнат
+     разговаривает с игроком как робот. */
+  function plural(n, one, few, many) {
+    const a = Math.abs(n) % 100, b = a % 10;
+    if (a > 10 && a < 20) return many;
+    if (b > 1 && b < 5) return few;
+    return b === 1 ? one : many;
+  }
+
   /* ---------- Код комнаты ---------- */
   const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // без похожих символов (0/O, 1/I)
   const makeCode = (n = 5) => Array.from({ length: n }, () => choice(ALPHABET.split(''))).join('');
@@ -219,5 +229,6 @@ const U = (() => {
   }
 
   return { $, $$, clamp, lerp, rand, randInt, choice, COLORS, shade, rgba,
-           loadImage, fileToDataURL, defaultAvatar, sfx, toast, makeCode, dropZone };
+           loadImage, fileToDataURL, defaultAvatar, sfx, toast, makeCode, dropZone,
+           plural };
 })();

@@ -22,11 +22,14 @@ const UI = (() => {
   let arenaData = null;                    // фото арены (только у хоста)
   let killLimit = 10;
   let hudSig = '';                         // подпись табло, чтобы не дёргать DOM зря
+  let screen = 'menu';                     // текущий экран
+  let publicRoom = true;                   // хост пускает незнакомцев из списка
 
   /* =================================================================
      ЭКРАНЫ
      ================================================================= */
   function showScreen(name) {
+    screen = name;
     ['menu', 'lobby', 'game'].forEach(s =>
       $('#screen-' + s).classList.toggle('active', s === name));
     // по этому классу телефон понимает, что пора просить повернуть экран
@@ -34,6 +37,236 @@ const UI = (() => {
     // в лобби заранее подтягиваем детектор лиц, чтобы первая загрузка фото не ждала
     if (name === 'lobby') Face.warmup();
     if (name !== 'game') { $('#win-overlay').classList.remove('on'); $('#death-overlay').classList.remove('on'); }
+
+    syncBrowse();
+    // баннер Яндекса — где угодно, кроме боя (правила площадки)
+    if (name === 'game') YG.hideBanner(); else YG.showBanner();
+    syncAnnounce();
+  }
+
+  /* =================================================================
+     ОТКРЫТЫЕ КОМНАТЫ
+
+     Список живёт только в меню: там его смотрят, и только там нужны
+     сокеты до релеев. Ушли в лобби — гасим, чтобы не держать связь
+     впустую.
+     ================================================================= */
+
+  let stopBrowse = null;      // функция, гасящая текущий просмотр
+  let browsing = false;       // хотим ли мы смотреть список прямо сейчас
+  let rooms = [];             // что видно на этот момент
+
+  /* Смотреть список нужно не только в меню. Хост, который открыл комнату
+     и сидит в ней один, тоже должен видеть чужие — см. considerMerge:
+     иначе двое, нажавшие «Быстрый бой» одновременно, будут ждать друг
+     друга в двух пустых комнатах до скончания века. */
+  function syncBrowse() {
+    const want = screen === 'menu' ||
+      (screen === 'lobby' && isHost && publicRoom && players.length === 1);
+    if (want) startBrowsing(); else stopBrowsing();
+  }
+
+  function startBrowsing() {
+    if (browsing) return;
+    browsing = true;
+    renderRooms();
+    Lobbies.browse(list => { rooms = list; renderRooms(); considerMerge(); })
+      .then(stop => {
+        // пока поднимались сокеты, игрок мог уйти с экрана
+        if (browsing) stopBrowse = stop; else stop();
+      })
+      .catch(() => { });
+  }
+
+  function stopBrowsing() {
+    browsing = false;
+    if (stopBrowse) { stopBrowse(); stopBrowse = null; }
+    rooms = [];
+  }
+
+  function renderRooms() {
+    const box = $('#rooms-list'), state = $('#rooms-state');
+    box.innerHTML = '';
+
+    if (!rooms.length) {
+      state.textContent = browsing ? 'ищем…' : '';
+      const empty = document.createElement('div');
+      empty.className = 'rooms-empty';
+      empty.textContent = 'Пока никто не ждёт. Жми «БЫСТРЫЙ БОЙ» — откроем ' +
+                          'комнату, и следующий зашедший попадёт к тебе.';
+      box.appendChild(empty);
+      return;
+    }
+
+    state.textContent = rooms.length + ' ' + U.plural(rooms.length, 'комната', 'комнаты', 'комнат');
+    rooms.slice(0, 8).forEach(r => {
+      const el = document.createElement('button');
+      el.className = 'room-row';
+      el.innerHTML = `
+        <span class="rr-name">${escapeHtml(r.name)}</span>
+        <span class="rr-n">${r.n}/${r.max}</span>
+        <span class="rr-go">ВОЙТИ</span>`;
+      el.addEventListener('click', async () => {
+        if (busy) return;          // уже куда-то подключаемся
+        U.sfx.ui();
+        menuBusy(true);
+        status('Подсаживаемся к «' + r.name + '»…');
+        const err = await joinByCode(r.code, QUICK_WAIT);
+        menuBusy(false);
+        if (err) status('Комната «' + r.name + '» уже закрылась — попробуй другую.', true);
+      });
+      box.appendChild(el);
+    });
+  }
+
+  /* =================================================================
+     ОБЪЯВЛЕНИЕ СВОЕЙ КОМНАТЫ
+
+     Комнату видно, пока хост сидит в лобби, оставил галочку «видна
+     всем» и внутри есть место. Любое изменение — зашёл игрок, вышел,
+     начался бой — просто зовёт эту функцию заново.
+     ================================================================= */
+  function syncAnnounce() {
+    const show = isHost && publicRoom && screen === 'lobby' &&
+                 players.length < MAX_PLAYERS && !!Net.code;
+    if (!show) { Lobbies.unannounce(); return; }
+    Lobbies.announce({ code: Net.code, name: me.name, n: players.length, max: MAX_PLAYERS });
+  }
+
+  /* =================================================================
+     СХЛОПЫВАНИЕ ПУСТЫХ КОМНАТ
+
+     Двое нажали «Быстрый бой» в одну секунду: никто никого ещё не видел,
+     оба открыли по комнате и оба ждут. Друг друга они теперь видят — но
+     если «идти навстречу» будут оба, они просто поменяются местами.
+
+     Поэтому решение принимается не по договорённости, а по коду комнаты:
+     переходит тот, чей код больше. Сравнение антисимметрично, так что из
+     двоих двинется ровно один, а второй останется хостом и даже не
+     узнает, что что-то происходило.
+     ================================================================= */
+  let merging = false;
+  let mergeBlocked = 0;     // до какого времени не пробуем снова
+
+  function considerMerge() {
+    if (merging || Date.now() < mergeBlocked) return;
+    if (!(isHost && publicRoom && screen === 'lobby' && players.length === 1 && Net.code)) return;
+    const mine = Net.code;
+    const target = rooms.filter(r => r.code < mine).sort((a, b) => (a.code < b.code ? -1 : 1))[0];
+    if (target) merge(target);
+  }
+
+  async function merge(target) {
+    merging = true;
+    U.toast('Нашли, кто ждёт, — переходим к «' + target.name + '»');
+    Lobbies.unannounce();
+    Net.destroy();
+    isHost = false;
+    players = [];
+
+    let err = await joinByCode(target.code, QUICK_WAIT);
+    if (err) {
+      /* Не пустили: комната закрылась, пока мы шли. Поднимаем свою
+         заново — но какое-то время больше никуда не идём, иначе можно
+         бегать по кругу между двумя недоступными комнатами. */
+      mergeBlocked = Date.now() + 30000;
+      err = await hostRoom(true);
+    }
+    merging = false;
+    if (err) { status(err, true); showScreen('menu'); }
+  }
+
+  /* =================================================================
+     ВХОД В ИГРУ: общие кирпичи для всех трёх путей
+     (быстрый бой, список комнат, код от друга)
+     ================================================================= */
+
+  /* Сколько ждать хоста при автоподборе. Ручной вход по коду ждёт дольше
+     (см. net.js): там человек рассчитывает на конкретную комнату, а тут
+     рядом есть другие — дешевле перейти к следующей. */
+  const QUICK_WAIT = 12000;
+
+  let busy = false;
+
+  function status(msg, err) {
+    const el = $('#menu-status');
+    el.textContent = msg;
+    el.classList.toggle('err', !!err);
+  }
+
+  function menuBusy(on) {
+    busy = on;
+    ['#btn-quick', '#btn-create', '#btn-join'].forEach(s => { $(s).disabled = on; });
+  }
+
+  /* Поднять свою комнату. pub — объявлять ли её в общем списке. */
+  function hostRoom(pub) {
+    return new Promise(res => {
+      Net.createRoom(
+        (code) => {
+          isHost = true;
+          publicRoom = pub;
+          $('#chk-public').checked = pub;
+          players = [{ pid: 'host', name: me.name, avatar: me.avatar, char: me.char }];
+          $('#room-code').textContent = code;
+          $('#host-panel').style.display = 'flex';
+          $('#client-wait').style.display = 'none';
+          $('#pub-toggle').style.display = '';
+          showScreen('lobby');
+          renderPlayers();
+          status('');
+          res(null);
+        },
+        (err) => res(err || 'Не удалось создать комнату')
+      );
+    });
+  }
+
+  /* Войти в чужую комнату. Возвращает null при успехе и текст ошибки,
+     если не вышло, — вызывающий сам решает, ругаться или пробовать
+     следующую комнату. */
+  function joinByCode(code, waitMs) {
+    return new Promise(res => {
+      Net.joinRoom(code,
+        () => {
+          isHost = false;
+          $('#room-code').textContent = code;
+          $('#host-panel').style.display = 'none';
+          $('#client-wait').style.display = 'block';
+          $('#pub-toggle').style.display = 'none';
+          showScreen('lobby');
+          sendProfile();
+          status('');
+          res(null);
+        },
+        (err) => res(err || 'Не удалось подключиться'),
+        waitMs
+      );
+    });
+  }
+
+  /* Быстрый бой: подсесть к живому лобби, а если таких нет — открыть
+     своё и ждать. Кнопка одна, и она всегда чем-то заканчивается. */
+  async function quickMatch() {
+    U.sfx.ui();
+    menuBusy(true);
+    status('Ищем открытые комнаты…');
+
+    // список уже собран просмотром в меню — тогда ждать нечего
+    let list = rooms.length ? rooms.slice() : await Lobbies.find();
+
+    for (const r of list.slice(0, 2)) {
+      status('Подсаживаемся к «' + r.name + '»…');
+      const err = await joinByCode(r.code, QUICK_WAIT);
+      if (!err) { menuBusy(false); return; }
+      // комната успела закрыться или хост ушёл — берём следующую
+    }
+
+    status('Свободных комнат нет — открываем свою…');
+    const err = await hostRoom(true);
+    menuBusy(false);
+    if (err) status(err, true);
+    else U.toast('Комната открыта — ждём соперника');
   }
 
   /* =================================================================
@@ -73,6 +306,19 @@ const UI = (() => {
     drawAvatarPreview(null);
     renderChars();
     renderTaunts();
+
+    /* На Яндексе у авторизованного игрока уже есть имя — подставим его
+       вместо «Боец 42», но только если человек ещё ничего не вписал сам:
+       ник приезжает асинхронно и не должен затирать введённое. */
+    YG.onName((name) => {
+      if (!name || $('#input-name').value !== me.name) return;
+      me.name = name;
+      $('#input-name').value = name;
+      profileChanged();
+    });
+
+    // экран уже нарисован: включаем просмотр комнат и баннер площадки
+    showScreen('menu');
   }
 
   /* Подсказка «поставь ярлык» — только там, где она уместна: iPhone/iPad
@@ -135,60 +381,33 @@ const UI = (() => {
      ГЛАВНОЕ МЕНЮ
      ================================================================= */
   function bindMenu() {
-    const status = (msg, err) => {
-      const el = $('#menu-status');
-      el.textContent = msg;
-      el.classList.toggle('err', !!err);
-    };
-
     /* Пока идёт подбор релеев, сеть рассказывает о ходе дела. Показываем
        это только во время создания/входа: в покое надпись в меню своя. */
-    let busy = false;
     Net.on('status', (m) => { if (busy) status(m); });
 
-    $('#btn-create').addEventListener('click', () => {
+    $('#btn-quick').addEventListener('click', quickMatch);
+
+    /* «Создать лобби» — комната для друзей: код передают руками, в общем
+       списке она не светится. Кто хочет случайных соперников, жмёт
+       «Быстрый бой»; галочку в лобби всегда можно переставить. */
+    $('#btn-create').addEventListener('click', async () => {
       U.sfx.ui();
-      busy = true;
-      $('#btn-create').disabled = true;
+      menuBusy(true);
       status('Создаём комнату…');
-      Net.createRoom(
-        (code) => {
-          isHost = true;
-          players = [{ pid: 'host', name: me.name, avatar: me.avatar, char: me.char }];
-          busy = false;
-          $('#btn-create').disabled = false;
-          $('#room-code').textContent = code;
-          $('#host-panel').style.display = 'flex';
-          $('#client-wait').style.display = 'none';
-          showScreen('lobby');
-          renderPlayers();
-          status('');
-        },
-        (err) => { busy = false; $('#btn-create').disabled = false; status(err, true); }
-      );
+      const err = await hostRoom(false);
+      menuBusy(false);
+      if (err) status(err, true);
     });
 
-    const doJoin = () => {
+    const doJoin = async () => {
       const code = $('#input-code').value.trim().toUpperCase();
       if (code.length < 4) return status('Введи код комнаты', true);
       U.sfx.ui();
-      busy = true;
-      $('#btn-join').disabled = true;
+      menuBusy(true);
       status('Подключаемся к ' + code + '…');
-      Net.joinRoom(code,
-        () => {
-          isHost = false;
-          busy = false;
-          $('#btn-join').disabled = false;
-          $('#room-code').textContent = code;
-          $('#host-panel').style.display = 'none';
-          $('#client-wait').style.display = 'block';
-          showScreen('lobby');
-          sendProfile();
-          status('');
-        },
-        (err) => { busy = false; $('#btn-join').disabled = false; status(err, true); }
-      );
+      const err = await joinByCode(code);
+      menuBusy(false);
+      if (err) status(err, true);
     };
 
     /* Самопроверка: показывает, что из трёх кусков связи работает —
@@ -302,6 +521,18 @@ const UI = (() => {
       [...$('#seg-kills').children].forEach(x => x.classList.toggle('on', x === b));
       killLimit = parseInt(b.dataset.v, 10);
       if (isHost) broadcastLobby();
+    });
+
+    /* --- видна ли комната незнакомцам (хост) --- */
+    $('#chk-public').addEventListener('change', (e) => {
+      publicRoom = e.target.checked;
+      U.sfx.ui();
+      syncAnnounce();
+      syncBrowse();
+      renderPlayers();
+      U.toast(publicRoom
+        ? 'Комната в общем списке — к тебе могут подсесть'
+        : 'Комната скрыта: вход только по коду');
     });
 
     /* --- копирование кода --- */
@@ -436,9 +667,16 @@ const UI = (() => {
     if (isHost) {
       $('#btn-start').disabled = n < 2;
       $('#host-note').textContent = n < 2
-        ? 'Нужно минимум 2 игрока.'
+        ? (publicRoom
+            ? 'Нужно минимум 2 игрока. Комната в общем списке — ждём, кто подсядет.'
+            : 'Нужно минимум 2 игрока. Передай код друзьям или включи «видна всем».')
         : `Готово: ${n} бойца(ов). Можно начинать!`;
     }
+
+    // состав изменился — объявление о комнате должно это отразить,
+    // а одинокий хост ещё и продолжает смотреть на чужие комнаты
+    syncAnnounce();
+    syncBrowse();
   }
 
   function escapeHtml(s) {
@@ -525,25 +763,29 @@ const UI = (() => {
   /* =================================================================
      ПЕРЕХОДЫ
      ================================================================= */
-  function backToLobby() {
+  async function backToLobby() {
     Game.stop();
     hudSig = '';
     $('#win-overlay').classList.remove('on');
     $('#death-overlay').classList.remove('on');
     showScreen('lobby');
     renderPlayers();
+    /* Пауза между боями — единственное место, где полноэкранная реклама
+       уместна: бой уже закончился, следующий начнёт хост. Вне Яндекса и
+       на первом бою вызов ничего не делает. */
+    await YG.interstitial();
   }
 
   function leave() {
     Game.stop();
+    Lobbies.unannounce();      // комнаты больше нет — снимаем объявление
     Net.destroy();
     isHost = false;
     players = [];
     arenaData = null;
     hudSig = '';
     $('#arena-drop').classList.remove('has-photo');
-    $('#menu-status').textContent = 'Хост создаёт комнату и передаёт код друзьям — играть можно из разных сетей и городов.';
-    $('#menu-status').classList.remove('err');
+    status('Играть можно из разных сетей и городов — соперника найдём сами.');
     showScreen('menu');
   }
 

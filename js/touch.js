@@ -29,6 +29,8 @@ const Touch = (() => {
     catch (e) { return 'ontouchstart' in window; }
   })();
 
+  let on = false;   // кнопки уже построены
+
   /* Раскладка. Руки — верхний ряд, ноги — нижний: та же логика, что и на
      клавиатуре (U I O над J K L), чтобы объяснение управления было одно
      на всех. */
@@ -154,10 +156,19 @@ const Touch = (() => {
 
   function init() {
     if (!isTouch) return;
+    enable();
+  }
+
+  /* Отдельно от init, потому что о телефоне можно узнать и позже: SDK
+     Яндекса поднимается асинхронно и отвечает на deviceInfo.isMobile()
+     уже после того, как меню отрисовано. Второй вызов ничего не ломает. */
+  function enable() {
+    if (on) return;
+    on = true;
     document.body.classList.add('touch');
     build();
     bind();
   }
 
-  return { init, get isTouch() { return isTouch; } };
+  return { init, enable, get isTouch() { return on || isTouch; } };
 })();

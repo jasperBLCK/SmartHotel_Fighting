@@ -150,7 +150,7 @@ const Net = (() => {
   }
 
   /* ---------------- Общий вход в комнату ---------------- */
-  async function open(roomCode, asHost, onReady, onFail) {
+  async function open(roomCode, asHost, onReady, onFail, waitMs) {
     destroy();
     isHost = asHost;
     code = roomCode;
@@ -239,7 +239,7 @@ const Net = (() => {
         const m = joinFailReason();
         emit('error', m); if (onFail) onFail(m);
         destroy();
-      }, HOST_WAIT);
+      }, waitMs || HOST_WAIT);
     }
   }
 
@@ -247,10 +247,14 @@ const Net = (() => {
   function createRoom(onReady, onFail) {
     open(U.makeCode(5), true, onReady, onFail);
   }
-  function joinRoom(roomCode, onReady, onFail) {
+  /* waitMs — сколько ждать отклика хоста. По умолчанию щедрые 25 секунд:
+     человек ввёл код руками, и лучше подождать, чем зря обломать. При
+     автоподборе (быстрый бой) время урезают: там комнат несколько, и
+     проще перейти к следующей, чем стоять у закрытой двери. */
+  function joinRoom(roomCode, onReady, onFail, waitMs) {
     const c = String(roomCode || '').trim().toUpperCase();
     if (c.length < 4) { if (onFail) onFail('Слишком короткий код'); return; }
-    open(c, false, onReady, onFail);
+    open(c, false, onReady, onFail, waitMs);
   }
 
   /* ---------------- Приём ---------------- */
@@ -371,6 +375,13 @@ const Net = (() => {
      невидимыми друг для друга — а выглядит это как «комната не найдена».
      Точное время берём из заголовка ответа сервера, откуда открыта игра. */
   async function clockSkew() {
+    /* На Яндексе время площадки уже под рукой и не зависит ни от прокси,
+       ни от кэша — берём его. Заголовок ответа остаётся запасным путём
+       для GitHub Pages и всего остального. */
+    try {
+      const t = YG.serverTime();
+      if (t) return Math.round((t - Date.now()) / 1000);
+    } catch (e) { }
     try {
       const t0 = Date.now();
       const r = await fetch(location.href, { method: 'HEAD', cache: 'no-store' });
@@ -437,9 +448,19 @@ const Net = (() => {
      игрок читает меню и вводит имя — к моменту «СОЗДАТЬ ЛОББИ» он готов. */
   function warmup() { pickRelays().catch(() => { }); }
 
+  /* Наружу для lobbies.js: каталог открытых комнат живёт на тех же
+     релеях и тем же модулем подписывается на топик. Отдельный подбор
+     ему заводить нельзя — иначе объявления улетят на одни релеи, а
+     слушать их будут на других. */
+  async function relayUrls() {
+    try { return await pickRelays(); }
+    catch (e) { return NetConfig.relays().slice(0, NetConfig.want); }
+  }
+
   return {
     on, createRoom, joinRoom, toHost, sendTo, broadcast, destroy, diagnose,
-    warmup, forgetRelays,
+    warmup, forgetRelays, relayUrls,
+    lib: load,
     get isHost() { return isHost; },
     get myId() { return myId; },
     get code() { return code; },

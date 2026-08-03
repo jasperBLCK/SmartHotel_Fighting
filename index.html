@@ -37,14 +37,28 @@
     <p class="tagline">2–4 игрока · через интернет · все против всех</p>
 
     <div class="menu-actions">
-      <button class="btn btn-primary" id="btn-create">СОЗДАТЬ ЛОББИ</button>
+      <button class="btn btn-primary btn-big" id="btn-quick">БЫСТРЫЙ БОЙ</button>
+      <div class="quick-note">Подсадим к тому, кто уже ждёт. Никого нет — откроем свою
+        комнату, и к тебе подсядут.</div>
+
+      <div class="menu-split"><span>или с друзьями по коду</span></div>
       <div class="join-row">
+        <button class="btn" id="btn-create">СОЗДАТЬ ЛОББИ</button>
         <input id="input-code" class="code-input" maxlength="6" placeholder="КОД" autocomplete="off" spellcheck="false">
         <button class="btn" id="btn-join">ПОДКЛЮЧИТЬСЯ</button>
       </div>
     </div>
 
-    <div class="menu-hint" id="menu-status">Хост создаёт комнату и передаёт код друзьям — играть можно из разных сетей и городов.</div>
+    <div class="menu-hint" id="menu-status">Играть можно из разных сетей и городов — соперника найдём сами.</div>
+
+    <!-- Живой список комнат: хосты объявляют себя, пока ждут игроков -->
+    <div class="rooms-block">
+      <div class="rooms-head">
+        <span class="rooms-title">ОТКРЫТЫЕ КОМНАТЫ</span>
+        <span class="rooms-state" id="rooms-state">ищем…</span>
+      </div>
+      <div class="rooms-list" id="rooms-list"></div>
+    </div>
 
     <!-- Самопроверка связи: видно, что именно не проходит, если не соединяет -->
     <div class="net-check">
@@ -93,6 +107,11 @@
         <div class="room-label">КОД КОМНАТЫ</div>
         <div class="room-code" id="room-code">------</div>
         <button class="btn btn-ghost btn-sm" id="btn-copy">СКОПИРОВАТЬ</button>
+        <!-- Только у хоста: пускать ли в комнату незнакомцев из списка -->
+        <label class="pub-toggle" id="pub-toggle">
+          <input type="checkbox" id="chk-public" checked>
+          <span>видна всем</span>
+        </label>
       </div>
       <div class="lobby-title">
         <span class="lobby-title-main">ЛОББИ</span>
@@ -202,6 +221,7 @@
 <script src="js/face.js"></script>
 <script src="js/net-config.js"></script>
 <script src="js/net.js"></script>
+<script src="js/lobbies.js"></script>
 <script src="js/fighter.js"></script>
 <script src="js/game.js"></script>
 <script src="js/touch.js"></script>
